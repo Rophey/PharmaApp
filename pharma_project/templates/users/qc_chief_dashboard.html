@@ -1,0 +1,146 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1>Панель начальника ОКК</h1>
+
+<div class="alert alert-danger">
+    Есть {{ deviations|length }} отклонений, требующих вашего вмешательства
+</div>
+
+<div class="nav-tabs">
+    <div class="nav-tab active" data-tab="ebr-review">Проверка EBR</div>
+    <div class="nav-tab" data-tab="deviations">Отклонения</div>
+    <div class="nav-tab" data-tab="audit">Аудит</div>
+</div>
+
+<div class="tab-content active" id="ebr-review-tab">
+    <h3>Проверка электронных паспортов партий (EBR)</h3>
+    
+    <table>
+        <thead>
+            <tr>
+                <th>Номер партии</th>
+                <th>Продукт</th>
+                <th>Версия MBR</th>
+                <th>Статус</th>
+                <th>Отклонения</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ebr in pending_review %}
+            <tr>
+                <td>{{ ebr.batch_number }}</td>
+                <td>{{ ebr.mbr.product.product_name }}</td>
+                <td>{{ ebr.mbr.version }}</td>
+                <td>
+                    <span class="status-badge 
+                        {% if ebr.status.status_name == 'В работе' %}status-active
+                        {% elif ebr.status.status_name == 'Завершена' %}status-approved
+                        {% elif ebr.status.status_name == 'Заблокирована' %}status-blocked
+                        {% endif %}">
+                        {{ ebr.status.status_name }}
+                    </span>
+                </td>
+                <td>{% if ebr.deviation_set.exists %}{{ ebr.deviation_set.count }} отклонений{% else %}Нет{% endif %}</td>
+                <td>
+                    <div class="action-buttons">
+                        <a href="{% url 'ebr:ebr_detail' ebr.document_id %}" class="action-btn">Просмотр EBR</a>
+                        {% if ebr.status.status_name == 'В работе' %}
+                            <a href="#" class="action-btn success">Подписать ЭП</a>
+                        {% endif %}
+                        {% if ebr.status.status_name == 'Заблокирована' %}
+                            <a href="#" class="action-btn">Разблокировать</a>
+                            <a href="#" class="action-btn btn-danger">Отклонить</a>
+                        {% endif %}
+                    </div>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="6">Нет партий на проверке</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="tab-content" id="deviations-tab">
+    <h3>Управление отклонениями</h3>
+    
+    {% for deviation in deviations %}
+    <div class="card">
+        <h4>{% if deviation.deviation_type == 'critical' %}Критическое отклонение{% else %}Отклонение{% endif %}</h4>
+        <p><strong>Партия:</strong> {{ deviation.ebr.batch_number }}</p>
+        <p><strong>Параметр:</strong> {{ deviation.parameter_name }}</p>
+        <p><strong>Значение:</strong> {{ deviation.actual_value }} (ожидалось: {{ deviation.expected_value }})</p>
+        <p><strong>Допустимый диапазон:</strong> ±{{ deviation.tolerance }}%</p>
+        <p><strong>Время обнаружения:</strong> {{ deviation.detected_at|date:"d.m.Y H:i:s" }}</p>
+        
+        <form method="post" action="{% url 'quality:deviation_resolve' deviation.id %}">
+            {% csrf_token %}
+            <div class="form-group">
+                <label>Действие по отклонению</label>
+                <select name="action" required>
+                    <option value="">Выберите действие</option>
+                    <option value="block">Заблокировать партию</option>
+                    <option value="rework">Направить на доработку</option>
+                    <option value="accept">Принять с замечаниями</option>
+                    <option value="reject">Отклонить партию</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Комментарий</label>
+                <textarea name="comment" rows="3" placeholder="Опишите принятые меры"></textarea>
+            </div>
+            
+            <button type="submit" class="btn-success">Применить решение</button>
+        </form>
+    </div>
+    {% empty %}
+    <p>Нет отклонений</p>
+    {% endfor %}
+</div>
+
+<div class="tab-content" id="audit-tab">
+    <h3>Журнал аудита</h3>
+    
+    <div class="search-box">
+        <input type="text" id="audit-search" placeholder="Поиск по ID документа или пользователя">
+        <button id="search-audit-btn">Найти</button>
+    </div>
+    
+    <table>
+        <thead>
+            <tr>
+                <th>Дата и время</th>
+                <th>Пользователь</th>
+                <th>Действие</th>
+                <th>Документ</th>
+                <th>Комментарий</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>{% now "d.m.Y H:i:s" %}</td>
+                <td>system</td>
+                <td>Данные для демонстрации</td>
+                <td>-</td>
+                <td>Подключите журнал аудита через audit.views</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<script>
+document.querySelectorAll('.nav-tab').forEach(tab => {
+    tab.addEventListener('click', function() {
+        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+        this.classList.add('active');
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById(this.dataset.tab + '-tab').classList.add('active');
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1>MBR: {{ mbr.product.product_code }} v{{ mbr.version }}</h1>
+
+<div class="card">
+    <h3>Основная информация</h3>
+    <p><strong>Продукт:</strong> {{ mbr.product.product_name }}</p>
+    <p><strong>Статус:</strong> {{ mbr.status.status_name }}</p>
+    <p><strong>Версия:</strong> {{ mbr.version }}</p>
+    <p><strong>Дата утверждения:</strong> {{ mbr.approval_date|date:"d.m.Y"|default:"Не утверждён" }}</p>
+    <p><strong>Утвердил:</strong> {{ mbr.signed_by.last_name|default:"—" }} {{ mbr.signed_by.first_name|default:"" }}</p>
+    <p><strong>Комментарий:</strong> {{ mbr.comments|default:"—" }}</p>
+</div>
+
+<div class="card">
+    <h3>Технологические операции</h3>
+    <p>{{ mbr.operations|linebreaks }}</p>
+</div>
+
+<div class="card">
+    <h3>Сырьё</h3>
+    <ul>
+        {% for rm in mbr.raw_materials.all %}
+        <li>{{ rm.material_name }}</li>
+        {% empty %}
+        <li>Нет сырья</li>
+        {% endfor %}
+    </ul>
+</div>
+
+<div class="card">
+    <h3>Параметры процесса</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Параметр</th>
+                <th>Ед. изм.</th>
+                <th>Значение</th>
+                <th>Допуск (%)</th>
+                <th>Критическое отклонение (%)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for param in mbr.parameters.all %}
+            <tr>
+                <td>{{ param.parameter_name }}</td>
+                <td>{{ param.unit }}</td>
+                <td>{{ param.value }}</td>
+                <td>{{ param.tolerance }}</td>
+                <td>{{ param.critical_deviation }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5">Нет параметров</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="action-buttons">
+    <a href="{% url 'mbr:mbr_list' %}" class="btn">Назад к списку</a>
+    {% if mbr.status.status_name == 'Черновик' %}
+        <a href="{% url 'mbr:mbr_edit' mbr.document_id %}" class="btn">Редактировать</a>
+        <a href="{% url 'mbr:mbr_approve' mbr.document_id %}" class="btn-success">Утвердить</a>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,103 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1>Панель сотрудника ОКК</h1>
+
+<div class="alert alert-warning">
+    У вас есть {{ tasks|length }} активных заданий
+</div>
+
+<div class="nav-tabs">
+    <div class="nav-tab active" data-tab="tasks">Задания ОКК</div>
+    <div class="nav-tab" data-tab="qc-data">Ввод данных контроля</div>
+</div>
+
+<div class="tab-content active" id="tasks-tab">
+    <h3>Задания контроля качества</h3>
+    
+    <table>
+        <thead>
+            <tr>
+                <th>Номер партии</th>
+                <th>Продукт</th>
+                <th>Тип задания</th>
+                <th>Срок выполнения</th>
+                <th>Статус</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for task in tasks %}
+            <tr>
+                <td>{{ task.ebr.batch_number }}</td>
+                <td>{{ task.ebr.mbr.product.product_name }}</td>
+                <td>{{ task.get_task_type_display }}</td>
+                <td>{{ task.due_date|date:"d.m.Y H:i" }}</td>
+                <td>
+                    <span class="status-badge 
+                        {% if task.status == 'new' %}status-draft
+                        {% elif task.status == 'in_progress' %}status-active
+                        {% elif task.status == 'completed' %}status-approved
+                        {% endif %}">
+                        {{ task.get_status_display }}
+                    </span>
+                </td>
+                <td>
+                    <a href="{% url 'quality:qc_task_detail' task.id %}" class="action-btn">Выполнить</a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="6">Нет активных заданий</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="tab-content" id="qc-data-tab">
+    <h3>Ввод данных контроля качества</h3>
+    
+    <form method="post" action="{% url 'quality:qc_submit_results' 0 %}">
+        {% csrf_token %}
+        <div class="form-group">
+            <label>Выберите партию</label>
+            <select name="ebr_id" required>
+                <option value="">-- Выберите партию --</option>
+                {% for task in tasks %}
+                <option value="{{ task.ebr.document_id }}">{{ task.ebr.batch_number }} - {{ task.ebr.mbr.product.product_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label>Визуальный контроль и лабораторные испытания</label>
+            <textarea name="visual_control" rows="4" required></textarea>
+        </div>
+        
+        <div class="form-group">
+            <label>Прикрепление файлов (сканы протоколов)</label>
+            <input type="file" name="qc_files" multiple>
+        </div>
+        
+        <div class="form-group">
+            <label>Комментарий</label>
+            <textarea name="comments" rows="3"></textarea>
+        </div>
+        
+        <button type="submit" class="btn-success">Сохранить данные</button>
+        <button type="submit" name="confirm" value="1" class="btn-success">Подтвердить выполнение операции</button>
+    </form>
+</div>
+
+<script>
+document.querySelectorAll('.nav-tab').forEach(tab => {
+    tab.addEventListener('click', function() {
+        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+        this.classList.add('active');
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById(this.dataset.tab + '-tab').classList.add('active');
+    });
+});
+</script>
+{% endblock %}

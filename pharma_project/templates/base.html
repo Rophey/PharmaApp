@@ -1,0 +1,81 @@
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ИС УПТ - {% block title %}Информационная система управления процессом таблетирования{% endblock %}</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div class="logo">
+                ИС УПТ - Информационная система управления процессом таблетирования
+            </div>
+            <div class="user-info">
+                <span id="current-role">
+                    {% if user.is_authenticated %}
+                        {{ user.get_role_display }}: {{ user.last_name }} {{ user.first_name }}
+                    {% else %}
+                        Не авторизован
+                    {% endif %}
+                </span>
+                {% if user.is_authenticated %}
+                    <a href="{% url 'users:logout' %}" class="role-btn">Выйти</a>
+                {% endif %}
+            </div>
+        </div>
+    </header>
+
+   <div class="container">
+    {% if user.is_authenticated %}
+    <div class="role-selector">
+        <a href="{% url 'users:dashboard' %}" class="role-btn">Главная</a>
+        {% if user.role == 'системный администратор' %}
+            <a href="{% url 'users:admin_dashboard' %}" class="role-btn">Панель администратора</a>
+        {% endif %}
+        {% if user.role == 'оператор' %}
+            <a href="{% url 'users:operator_dashboard' %}" class="role-btn">Панель оператора</a>
+        {% endif %}
+        {% if user.role == 'технолог' %}
+            <a href="{% url 'users:technologist_dashboard' %}" class="role-btn">Панель технолога</a>
+        {% endif %}
+        {% if user.role == 'главный технолог' %}
+            <a href="{% url 'users:chief_technologist_dashboard' %}" class="role-btn">Панель главного технолога</a>
+        {% endif %}
+        {% if user.role == 'сотрудник ОКК' %}
+            <a href="{% url 'users:qc_specialist_dashboard' %}" class="role-btn">Панель сотрудника ОКК</a>
+        {% endif %}
+        {% if user.role == 'начальник ОКК' %}
+            <a href="{% url 'users:qc_chief_dashboard' %}" class="role-btn">Панель начальника ОКК</a>
+        {% endif %}
+        {% if user.role == 'директор' %}
+            <a href="{% url 'users:director_dashboard' %}" class="role-btn">Панель директора</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+    {% endif %}
+
+    {% block content %}{% endblock %}
+</div>
+
+    <script>
+        // Базовые JS функции
+        function validateLogin(login) {
+            const latinRegex = /^[a-zA-Z0-9_]+$/;
+            return login.length >= 8 && login.length <= 15 && latinRegex.test(login);
+        }
+
+        function validatePassword(password) {
+            const latinRegex = /^[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]+$/;
+            return password.length >= 8 && password.length <= 15 && latinRegex.test(password);
+        }
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,102 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1>Панель главного технолога</h1>
+
+<div class="nav-tabs">
+    <div class="nav-tab active" data-tab="mbr-management">Управление MBR</div>
+    <div class="nav-tab" data-tab="mbr-creation">Создание MBR</div>
+</div>
+
+<div class="tab-content active" id="mbr-management-tab">
+    <h3>Управление электронными рецептурами (MBR)</h3>
+    
+    <table>
+        <thead>
+            <tr>
+                <th>Код продукта</th>
+                <th>Наименование продукта</th>
+                <th>Версия MBR</th>
+                <th>Статус</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for mbr in mbrs %}
+            <tr>
+                <td>{{ mbr.product.product_code }}</td>
+                <td>{{ mbr.product.product_name }}</td>
+                <td>{{ mbr.version }}</td>
+                <td>
+                    <span class="status-badge {% if mbr.status.status_name == 'Утверждён' %}status-approved{% else %}status-draft{% endif %}">
+                        {{ mbr.status.status_name }}
+                    </span>
+                </td>
+                <td>
+                    <div class="action-buttons">
+                        <a href="{% url 'mbr:mbr_detail' mbr.document_id %}" class="action-btn">Просмотр</a>
+                        {% if mbr.status.status_name == 'Черновик' %}
+                            <a href="{% url 'mbr:mbr_edit' mbr.document_id %}" class="action-btn">Редактировать</a>
+                            <a href="{% url 'mbr:mbr_approve' mbr.document_id %}" class="action-btn success">Утвердить</a>
+                        {% endif %}
+                        {% if mbr.status.status_name == 'Утверждён' %}
+                            <a href="{% url 'mbr:mbr_new_version' mbr.document_id %}" class="action-btn">Новая версия</a>
+                        {% endif %}
+                    </div>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5">Нет MBR</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="tab-content" id="mbr-creation-tab">
+    <h3>Создание новой рецептуры (MBR)</h3>
+    
+    <form method="post" action="{% url 'mbr:mbr_create' %}">
+        {% csrf_token %}
+        <div class="form-group">
+            <label>Наименование продукта</label>
+            <input type="text" name="product_name" required>
+        </div>
+        
+        <div class="form-group">
+            <label>Код продукта</label>
+            <input type="text" name="product_code" required>
+        </div>
+        
+        <div class="form-group">
+            <label>Версия MBR</label>
+            <input type="text" name="version" value="v1" readonly>
+        </div>
+        
+        <div class="form-group">
+            <label>Описание технологических операций</label>
+            <textarea name="operations" rows="4" required></textarea>
+        </div>
+        
+        <div class="form-group">
+            <label>Комментарий к версии</label>
+            <textarea name="comments" rows="3"></textarea>
+        </div>
+        
+        <button type="submit" class="btn-success">Сохранить черновик</button>
+        <button type="submit" name="approve" value="1" class="btn-success">Утвердить MBR</button>
+    </form>
+</div>
+
+<script>
+document.querySelectorAll('.nav-tab').forEach(tab => {
+    tab.addEventListener('click', function() {
+        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+        this.classList.add('active');
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById(this.dataset.tab + '-tab').classList.add('active');
+    });
+});
+</script>
+{% endblock %}

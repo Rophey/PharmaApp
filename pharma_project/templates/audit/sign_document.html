@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1>Подписание документа</h1>
+
+<div class="card">
+    <h3>Информация о документе</h3>
+    <p><strong>Тип документа:</strong> {{ document.type.type_name }}</p>
+    <p><strong>ID документа:</strong> {{ document.document_id }}</p>
+    
+    {% if document.type.type_name == 'MBR' %}
+        {% with mbr=document.mbr %}
+        <p><strong>Продукт:</strong> {{ mbr.product.product_name }}</p>
+        <p><strong>Версия:</strong> {{ mbr.version }}</p>
+        {% endwith %}
+    {% elif document.type.type_name == 'EBR' %}
+        {% with ebr=document.ebr %}
+        <p><strong>Номер партии:</strong> {{ ebr.batch_number }}</p>
+        <p><strong>Продукт:</strong> {{ ebr.mbr.product.product_name }}</p>
+        {% endwith %}
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>Подтверждение подписи</h3>
+    
+    <form method="post">
+        {% csrf_token %}
+        
+        <div class="form-group">
+            <label>Комментарий к подписи</label>
+            <textarea name="comment" rows="3" placeholder="Введите комментарий (необязательно)"></textarea>
+        </div>
+        
+        <div class="alert alert-warning">
+            <strong>Внимание!</strong> Подписание документа является юридически значимым действием. 
+            После подписания документ будет защищён от изменений.
+        </div>
+        
+        <div class="action-buttons">
+            <button type="submit" class="btn-success">Подтвердить подписание</button>
+            <a href="javascript:history.back()" class="btn">Отмена</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

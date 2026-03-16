@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1>Электронные подписи</h1>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Пользователь</th>
+                <th>Документ</th>
+                <th>Дата подписи</th>
+                <th>Комментарий</th>
+                <th>Хэш подписи</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for signature in signatures %}
+            <tr>
+                <td>{{ signature.id }}</td>
+                <td>{{ signature.user.last_name }} {{ signature.user.first_name }}</td>
+                <td>
+                    {% if signature.document %}
+                        {{ signature.document.type.type_name }} #{{ signature.document.document_id }}
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
+                <td>{{ signature.signature_date|date:"d.m.Y H:i:s" }}</td>
+                <td>{{ signature.comment|default:"—" }}</td>
+                <td><code>{{ signature.signature_hash|truncatechars:20 }}</code></td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="6" style="text-align: center;">Нет электронных подписей</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

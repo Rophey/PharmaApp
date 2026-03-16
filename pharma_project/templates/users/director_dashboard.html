@@ -1,0 +1,133 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1>Панель директора</h1>
+
+<div class="dashboard-grid">
+    <div class="dashboard-card">
+        <h3>Выпуск продукции за месяц</h3>
+        <div class="stat-value">{{ completed_batches }}</div>
+        <div class="stat-label">партий</div>
+    </div>
+
+    <div class="dashboard-card">
+        <h3>Процент брака</h3>
+        <div class="stat-value">2.4%</div>
+        <div class="stat-label">от общего объема</div>
+    </div>
+
+    <div class="dashboard-card">
+        <h3>Количество отклонений</h3>
+        <div class="stat-value">{{ total_deviations }}</div>
+        <div class="stat-label">за текущий месяц</div>
+    </div>
+
+    <div class="dashboard-card">
+        <h3>Эффективность оборудования</h3>
+        <div class="stat-value">94.7%</div>
+        <div class="stat-label">средний показатель</div>
+    </div>
+</div>
+
+<div class="nav-tabs">
+    <div class="nav-tab active" data-tab="production">Отчет по выпуску</div>
+    <div class="nav-tab" data-tab="deviation">Отчет по отклонениям</div>
+</div>
+
+<div class="tab-content active" id="production-tab">
+    <h3>Отчет по выпуску продукции за период</h3>
+    
+    <div class="form-group" style="display: flex; gap: 15px;">
+        <div style="flex: 1">
+            <label>Начало периода</label>
+            <input type="date" value="2026-03-01">
+        </div>
+        <div style="flex: 1">
+            <label>Конец периода</label>
+            <input type="date" value="2026-03-16">
+        </div>
+        <div style="align-self: flex-end">
+            <button>Сформировать отчет</button>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Продукт</th>
+                <th>Количество партий</th>
+                <th>Выпущено единиц</th>
+                <th>Процент брака</th>
+                <th>Расход сырья (кг)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Аспирин 500мг</td>
+                <td>15</td>
+                <td>1,250,000</td>
+                <td>1.8%</td>
+                <td>625</td>
+            </tr>
+            <tr>
+                <td>Парацетамол 500мг</td>
+                <td>12</td>
+                <td>980,000</td>
+                <td>2.5%</td>
+                <td>490</td>
+            </tr>
+            <tr>
+                <td><strong>Итого</strong></td>
+                <td><strong>27</strong></td>
+                <td><strong>2,230,000</strong></td>
+                <td><strong>2.1%</strong></td>
+                <td><strong>1,115</strong></td>
+            </tr>
+        </tbody>
+    </table>
+    
+    <button class="btn-success">Экспорт в Excel</button>
+</div>
+
+<div class="tab-content" id="deviation-tab">
+    <h3>Отчет по отклонениям за период</h3>
+    
+    <table>
+        <thead>
+            <tr>
+                <th>Тип отклонения</th>
+                <th>Количество</th>
+                <th>% от общего числа</th>
+                <th>Основные причины</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Превышение массы таблетки</td>
+                <td>8</td>
+                <td>44.4%</td>
+                <td>Нестабильность подачи сырья</td>
+            </tr>
+            <tr>
+                <td>Несоответствие толщины</td>
+                <td>5</td>
+                <td>27.8%</td>
+                <td>Износ пресс-форм</td>
+            </tr>
+        </tbody>
+    </table>
+    
+    <button class="btn-success">Экспорт в Excel</button>
+</div>
+
+<script>
+document.querySelectorAll('.nav-tab').forEach(tab => {
+    tab.addEventListener('click', function() {
+        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+        this.classList.add('active');
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById(this.dataset.tab + '-tab').classList.add('active');
+    });
+});
+</script>
+{% endblock %}

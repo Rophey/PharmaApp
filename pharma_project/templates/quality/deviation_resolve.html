@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1>Решение по отклонению</h1>
+
+<div class="card">
+    <h3>Информация об отклонении</h3>
+    <p><strong>Партия:</strong> {{ deviation.ebr.batch_number }}</p>
+    <p><strong>Продукт:</strong> {{ deviation.ebr.mbr.product.product_name }}</p>
+    <p><strong>Тип отклонения:</strong> {{ deviation.get_deviation_type_display }}</p>
+    <p><strong>Параметр:</strong> {{ deviation.parameter_name }}</p>
+    <p><strong>Ожидаемое значение:</strong> {{ deviation.expected_value }}</p>
+    <p><strong>Фактическое значение:</strong> {{ deviation.actual_value }}</p>
+    <p><strong>Допуск:</strong> {{ deviation.tolerance }}%</p>
+    <p><strong>Описание:</strong> {{ deviation.description }}</p>
+    <p><strong>Обнаружено:</strong> {{ deviation.detected_by.last_name }} {{ deviation.detected_by.first_name }} {{ deviation.detected_at|date:"d.m.Y H:i" }}</p>
+</div>
+
+<form method="post">
+    {% csrf_token %}
+    <div class="card">
+        <h3>Принять решение</h3>
+        
+        <div class="form-group">
+            <label>Действие по отклонению</label>
+            <select name="action" required>
+                <option value="">Выберите действие</option>
+                <option value="block">Заблокировать партию</option>
+                <option value="rework">Направить на доработку</option>
+                <option value="accept">Принять с замечаниями</option>
+                <option value="reject">Отклонить партию</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label>Комментарий</label>
+            <textarea name="comment" rows="3" placeholder="Опишите принятые меры"></textarea>
+        </div>
+        
+        <button type="submit" class="btn-success">Применить решение</button>
+        <a href="{% url 'quality:deviation_list' %}" class="btn">Отмена</a>
+    </div>
+</form>
+{% endblock %}

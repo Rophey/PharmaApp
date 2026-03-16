@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+
+{% block title %}Вход в систему{% endblock %}
+
+{% block content %}
+<div class="login-container">
+    <h2 class="login-title">Вход в систему</h2>
+
+    
+    <form method="post" id="login-form">
+        {% csrf_token %}
+        <div class="form-group">
+            <label for="login">Логин</label>
+            <input type="text" 
+                   id="login" 
+                   name="login" 
+                   placeholder="Введите логин"
+                   value="{{ request.POST.login }}"
+                   oninput="validateLoginField(this)">
+            <div class="error-message" id="login-error"></div>
+        </div>
+        
+        <div class="form-group">
+            <label for="password">Пароль</label>
+            <input type="password" 
+                   id="password" 
+                   name="password" 
+                   placeholder="Введите пароль"
+                   oninput="validatePasswordField(this)">
+            <div class="error-message" id="password-error"></div>
+        </div>
+        
+        <button type="submit" id="login-btn" class="login-btn" disabled>Войти</button>
+    </form>
+</div>
+
+<script>
+    const loginInput = document.getElementById('login');
+    const passwordInput = document.getElementById('password');
+    const loginBtn = document.getElementById('login-btn');
+    const loginError = document.getElementById('login-error');
+    const passwordError = document.getElementById('password-error');
+
+    function validateLoginField(input) {
+        const value = input.value;
+        const latinRegex = /^[a-zA-Z0-9_]+$/;
+        
+        if (value.length < 8 || value.length > 15) {
+            input.classList.add('error');
+            loginError.textContent = 'Логин должен быть 8-15 символов';
+            return false;
+        }
+        
+        if (!latinRegex.test(value)) {
+            input.classList.add('error');
+            loginError.textContent = 'Только латинские буквы, цифры и _';
+            return false;
+        }
+        
+        input.classList.remove('error');
+        loginError.textContent = '';
+        return true;
+    }
+
+    function validatePasswordField(input) {
+        const value = input.value;
+        const latinRegex = /^[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]+$/;
+        
+        if (value.length < 8 || value.length > 15) {
+            input.classList.add('error');
+            passwordError.textContent = 'Пароль должен быть 8-15 символов';
+            return false;
+        }
+        
+        if (!latinRegex.test(value)) {
+            input.classList.add('error');
+            passwordError.textContent = 'Только латинские буквы, цифры и спецсимволы';
+            return false;
+        }
+        
+        input.classList.remove('error');
+        passwordError.textContent = '';
+        return true;
+    }
+
+    function updateLoginButton() {
+        const loginValid = loginInput.value.length >= 8 && 
+                          loginInput.value.length <= 15 && 
+                          /^[a-zA-Z0-9_]+$/.test(loginInput.value);
+        
+        const passValid = passwordInput.value.length >= 8 && 
+                         passwordInput.value.length <= 15 && 
+                         /^[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]+$/.test(passwordInput.value);
+        
+        loginBtn.disabled = !(loginValid && passValid);
+    }
+
+    loginInput.addEventListener('input', function() {
+        validateLoginField(this);
+        updateLoginButton();
+    });
+
+    passwordInput.addEventListener('input', function() {
+        validatePasswordField(this);
+        updateLoginButton();
+    });
+</script>
+{% endblock %}
