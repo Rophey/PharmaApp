@@ -1,7 +1,7 @@
 from django.db import models
-from accounts.models import User
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
+from accounts.models import User
 
 
 class Action(models.Model):
@@ -29,6 +29,20 @@ class AuditLog(models.Model):
         verbose_name = 'Аудит'
         verbose_name_plural = 'Аудит'
         ordering = ['-timestamp']
+        # ТЗ 4.2.6.1.2 - запрет на модификацию и удаление
+        permissions = [
+            ('view_auditlog', 'Может просматривать журнал аудита'),
+        ]
 
     def __str__(self):
         return f"{self.user} - {self.action} - {self.timestamp}"
+
+    def save(self, *args, **kwargs):
+        # Запрет на редактирование существующих записей
+        if self.pk:
+            raise ValueError('Записи аудита нельзя изменять')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        # Запрет на удаление записей аудита
+        raise ValueError('Записи аудита нельзя удалять')

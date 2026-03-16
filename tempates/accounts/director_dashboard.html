@@ -1,0 +1,133 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Панель директора{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title">Выпуск продукции за месяц</h5>
+                <h2 class="text-primary">{{ stats.total_batches }}</h2>
+                <p class="text-muted">партий</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title">Процент брака</h5>
+                <h2 class="text-danger">{{ stats.defect_percentage }}%</h2>
+                <p class="text-muted">от общего объема</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title">Количество отклонений</h5>
+                <h2 class="text-warning">{{ stats.alerts_count }}</h2>
+                <p class="text-muted">за текущий месяц</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title">Эффективность оборудования</h5>
+                <h2 class="text-success">{{ stats.equipment_efficiency }}%</h2>
+                <p class="text-muted">средний показатель</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<ul class="nav nav-tabs mb-4" id="directorTabs" role="tablist">
+    <li class="nav-item">
+        <a class="nav-link active" data-bs-toggle="tab" href="#productionReport">Отчет по выпуску</a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link" data-bs-toggle="tab" href="#deviationReport">Отчет по отклонениям</a>
+    </li>
+</ul>
+
+<div class="tab-content">
+    <!-- Отчет по выпуску -->
+    <div class="tab-pane fade show active" id="productionReport">
+        <h4>Отчет по выпуску продукции за период</h4>
+        <form method="get" class="row mb-3">
+            <div class="col-md-4">
+                <label class="form-label">Начало периода</label>
+                <input type="date" class="form-control" name="start_date">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Конец периода</label>
+                <input type="date" class="form-control" name="end_date">
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-confirm">Сформировать отчет</button>
+            </div>
+        </form>
+        
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>Продукт</th>
+                    <th>Количество партий</th>
+                    <th>Выпущено единиц</th>
+                    <th>Процент брака</th>
+                    <th>Расход сырья (кг)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for report in production_reports %}
+                <tr>
+                    <td>{{ report.product_name }}</td>
+                    <td>{{ report.batches_count }}</td>
+                    <td>{{ report.units_produced }}</td>
+                    <td>{{ report.defect_percentage }}%</td>
+                    <td>{{ report.raw_material_consumed }}</td>
+                </tr>
+                {% endfor %}
+                <tr class="table-secondary">
+                    <td><strong>Итого</strong></td>
+                    <td><strong>{{ stats.total_batches }}</strong></td>
+                    <td><strong>{{ stats.total_units }}</strong></td>
+                    <td><strong>{{ stats.defect_percentage }}%</strong></td>
+                    <td><strong>{{ stats.total_raw_material }}</strong></td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <button class="btn btn-action">Экспорт в Excel</button>
+    </div>
+    
+    <!-- Отчет по отклонениям -->
+    <div class="tab-pane fade" id="deviationReport">
+        <h4>Отчет по отклонениям за период</h4>
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>Тип отклонения</th>
+                    <th>Количество</th>
+                    <th>% от общего числа</th>
+                    <th>Основные причины</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for report in deviation_reports %}
+                <tr>
+                    <td>{{ report.deviation_type }}</td>
+                    <td>{{ report.count }}</td>
+                    <td>{{ report.percentage }}%</td>
+                    <td>{{ report.main_cause }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        
+        <button class="btn btn-action">Экспорт в Excel</button>
+    </div>
+</div>
+{% endblock %}

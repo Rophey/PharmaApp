@@ -1,0 +1,172 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Панель системного администратора{% endblock %}
+
+{% block content %}
+<ul class="nav nav-tabs mb-4" id="adminTabs" role="tablist">
+    <li class="nav-item">
+        <a class="nav-link active" data-bs-toggle="tab" href="#userManagement">Управление пользователями</a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link" data-bs-toggle="tab" href="#systemSettings">Системные настройки</a>
+    </li>
+</ul>
+
+<div class="tab-content">
+    <!-- Управление пользователями -->
+    <div class="tab-pane fade show active" id="userManagement">
+        <h4>Управление пользователями и ролями</h4>
+        
+        <div class="card mb-4">
+            <div class="card-header">Добавление нового пользователя</div>
+            <div class="card-body">
+                <form method="post" action="{% url 'admin_user_create' %}">
+                    {% csrf_token %}
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Логин</label>
+                            <input type="text" class="form-control" name="username" required 
+                                   pattern="[a-zA-Z0-9_]{8,15}"
+                                   title="Логин может содержать только латинские буквы, цифры, технический пробел и быть в длину 8-15 символов">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Пароль</label>
+                            <input type="password" class="form-control" name="password" required 
+                                   pattern="[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{};:\',.<>?/\\|`~]{8,15}"
+                                   title="Пароль может содержать только латинские буквы, цифры и специальные символы и быть в длину 8-15 символов">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Роль</label>
+                            <select class="form-control" name="role" required>
+                                <option value="">Выберите роль</option>
+                                <option value="operator">Оператор цеха</option>
+                                <option value="technologist">Технолог</option>
+                                <option value="chief_technologist">Главный технолог</option>
+                                <option value="qc_specialist">Сотрудник ОКК</option>
+                                <option value="qc_head">Начальник ОКК</option>
+                                <option value="director">Директор</option>
+                                <option value="admin">Системный администратор</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-confirm">Создать пользователя</button>
+                </form>
+            </div>
+        </div>
+        
+        <h5>Существующие пользователи</h5>
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>Логин</th>
+                    <th>Роль</th>
+                    <th>Статус</th>
+                    <th>Дата создания</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>{{ user.username }}</td>
+                    <td>{{ user.get_role_display }}</td>
+                    <td>
+                        {% if user.is_active %}
+                            <span class="badge bg-success">Активен</span>
+                        {% else %}
+                            <span class="badge bg-secondary">Неактивен</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ user.date_joined|date:"d.m.Y" }}</td>
+                    <td>
+                        <button class="btn btn-action btn-sm">Редактировать</button>
+                        {% if user.is_active %}
+                            <form method="post" action="{% url 'admin_user_deactivate' user.id %}" style="display: inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-deactivate btn-sm">Деактивировать</button>
+                            </form>
+                        {% else %}
+                            <form method="post" action="{% url 'admin_user_activate' user.id %}" style="display: inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-confirm btn-sm">Активировать</button>
+                            </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Системные настройки -->
+    <div class="tab-pane fade" id="systemSettings">
+        <h4>Системные настройки</h4>
+        
+        <div class="card mb-4">
+            <div class="card-header">Настройка правил генерации номеров партий</div>
+            <div class="card-body">
+                <form method="post" action="{% url 'admin_settings_batch_number' %}">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label">Правило генерации</label>
+                        <select class="form-control" name="batch_rule">
+                            <option value="B-YYYY-XXX" {% if batch_rule == 'B-YYYY-XXX' %}selected{% endif %}>B-ГГГГ-XXX (B-2025-001)</option>
+                            <option value="PRODUCT-YYMMDD-XXX" {% if batch_rule == 'PRODUCT-YYMMDD-XXX' %}selected{% endif %}>ПРОДУКТ-ГГММДД-XXX (ASP-250415-001)</option>
+                            <option value="YYMMDD-XXX-PRODUCT" {% if batch_rule == 'YYMMDD-XXX-PRODUCT' %}selected{% endif %}>ГГММДД-XXX-ПРОДУКТ (250415-001-ASP)</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Следующий номер партии</label>
+                        <input type="text" class="form-control" name="next_batch_number" value="{{ next_batch_number }}" readonly>
+                    </div>
+                    <button type="submit" class="btn btn-confirm">Сохранить настройки</button>
+                </form>
+            </div>
+        </div>
+        
+        <div class="card mb-4">
+            <div class="card-header">Настройки интеграции с оборудованием</div>
+            <div class="card-body">
+                <form method="post" action="{% url 'admin_settings_equipment' %}">
+                    {% csrf_token %}
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">IP-адрес таблеточного пресса</label>
+                            <input type="text" class="form-control" name="press_ip" value="{{ press_ip }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">IP-адрес весов</label>
+                            <input type="text" class="form-control" name="scales_ip" value="{{ scales_ip }}">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Интервал опроса данных (сек)</label>
+                        <input type="number" class="form-control" name="poll_interval" value="{{ poll_interval }}">
+                    </div>
+                    <button type="submit" class="btn btn-confirm">Сохранить настройки</button>
+                </form>
+            </div>
+        </div>
+        
+        <div class="card mb-4">
+            <div class="card-header">Настройки оповещений</div>
+            <div class="card-body">
+                <form method="post" action="{% url 'admin_settings_alerts' %}">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label">Email для критических оповещений</label>
+                        <input type="email" class="form-control" name="alert_email" value="{{ alert_email }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Порог предупреждения (%)</label>
+                        <input type="number" class="form-control" name="warning_threshold" value="{{ warning_threshold }}">
+                        <small class="text-muted">Процент от допустимого отклонения для генерации предупреждения</small>
+                    </div>
+                    <button type="submit" class="btn btn-confirm">Сохранить настройки</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

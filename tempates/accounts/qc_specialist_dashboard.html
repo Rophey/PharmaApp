@@ -1,0 +1,93 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Панель сотрудника ОКК{% endblock %}
+
+{% block content %}
+<div class="alert alert-warning-custom mb-4">
+    <strong>У вас есть {{ new_tasks_count }} новое задание(я) на отбор проб</strong>
+</div>
+
+<ul class="nav nav-tabs mb-4" id="qcTabs" role="tablist">
+    <li class="nav-item">
+        <a class="nav-link active" data-bs-toggle="tab" href="#qcTasks">Задания ОКК</a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link" data-bs-toggle="tab" href="#qcInput">Ввод данных контроля</a>
+    </li>
+</ul>
+
+<div class="tab-content">
+    <!-- Задания ОКК -->
+    <div class="tab-pane fade show active" id="qcTasks">
+        <h4>Задания контроля качества</h4>
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>Номер партии</th>
+                    <th>Продукт</th>
+                    <th>Тип задания</th>
+                    <th>Срок выполнения</th>
+                    <th>Статус</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in tasks %}
+                <tr>
+                    <td>{{ task.batch_number }}</td>
+                    <td>{{ task.product_name }}</td>
+                    <td>{{ task.get_task_type_display }}</td>
+                    <td>{{ task.deadline|date:"d.m.Y H:i" }}</td>
+                    <td>
+                        {% if task.status == 'new' %}
+                            <span class="badge bg-primary">Новое</span>
+                        {% elif task.status == 'in_progress' %}
+                            <span class="badge bg-warning">В выполнении</span>
+                        {% else %}
+                            <span class="badge bg-success">Выполнено</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if task.status == 'new' %}
+                            <a href="{% url 'qc_task_execute' task.id %}" class="btn btn-confirm btn-sm">Выполнить</a>
+                        {% else %}
+                            <a href="{% url 'qc_task_view' task.id %}" class="btn btn-action btn-sm">Просмотр</a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Ввод данных контроля -->
+    <div class="tab-pane fade" id="qcInput">
+        <h4>Ввод данных контроля качества для партии {{ current_task.batch_number }}</h4>
+        <form method="post" action="{% url 'qc_task_submit' current_task.id %}" enctype="multipart/form-data">
+            {% csrf_token %}
+            
+            <div class="mb-3">
+                <label class="form-label">Визуальный контроль и лабораторные испытания</label>
+                <textarea class="form-control" name="inspection_notes" rows="4" required
+                          pattern="[а-яА-Яa-zA-Z0-9\s\.,;:\-\(\)]+"
+                          title="Используются неразрешённые символы"></textarea>
+            </div>
+            
+            <div class="mb-3">
+                <label class="form-label">Прикрепление файлов (сканы протоколов)</label>
+                <input type="file" class="form-control" name="attached_files" multiple>
+            </div>
+            
+            <div class="mb-3">
+                <label class="form-label">Комментарий</label>
+                <textarea class="form-control" name="comments" rows="2"
+                          pattern="[а-яА-Яa-zA-Z0-9\s\.,;:\-\(\)]+"></textarea>
+            </div>
+            
+            <button type="submit" name="save" class="btn btn-action">Сохранить данные</button>
+            <button type="submit" name="confirm" class="btn btn-confirm">Подтвердить выполнение операции</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

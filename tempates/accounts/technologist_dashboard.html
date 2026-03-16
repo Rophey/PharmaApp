@@ -1,0 +1,113 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Панель технолога{% endblock %}
+
+{% block content %}
+<ul class="nav nav-tabs mb-4" id="techTabs" role="tablist">
+    <li class="nav-item">
+        <a class="nav-link active" data-bs-toggle="tab" href="#launchBatch">Запуск партии</a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link" data-bs-toggle="tab" href="#monitorBatches">Мониторинг партий</a>
+    </li>
+</ul>
+
+<div class="tab-content">
+    <!-- Запуск партии -->
+    <div class="tab-pane fade show active" id="launchBatch">
+        <h4>Запуск новой производственной партии</h4>
+        <div class="mb-3">
+            <input type="text" class="form-control" id="productSearch" placeholder="Найти по коду продукта">
+            <button class="btn btn-action mt-2">Найти</button>
+        </div>
+        
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>Код продукта</th>
+                    <th>Наименование продукта</th>
+                    <th>Версия MBR</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for mbr in approved_mbrs %}
+                <tr>
+                    <td>{{ mbr.product_code }}</td>
+                    <td>{{ mbr.product_name }}</td>
+                    <td>{{ mbr.version }}</td>
+                    <td>
+                        <button class="btn btn-confirm btn-sm" data-bs-toggle="modal" data-bs-target="#launchModal{{ mbr.id }}">Запустить партию</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Мониторинг партий -->
+    <div class="tab-pane fade" id="monitorBatches">
+        <h4>Мониторинг производственных партий</h4>
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>Номер партии</th>
+                    <th>Продукт</th>
+                    <th>Версия MBR</th>
+                    <th>Статус</th>
+                    <th>Текущая операция</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for batch in batches %}
+                <tr>
+                    <td>{{ batch.batch_number }}</td>
+                    <td>{{ batch.product_name }}</td>
+                    <td>{{ batch.mbr_version }}</td>
+                    <td>
+                        {% if batch.status == 'in_progress' %}
+                            <span class="badge bg-warning">В процессе</span>
+                        {% elif batch.status == 'deviation' %}
+                            <span class="badge" style="background: #f39c12; color: white;">Отклонение</span>
+                        {% elif batch.status == 'completed' %}
+                            <span class="badge bg-success">Завершена</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ batch.current_operation }}</td>
+                    <td>
+                        <a href="{% url 'ebr_detail' batch.id %}" class="btn btn-action btn-sm">Просмотр EBR</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modals для запуска партий -->
+{% for mbr in approved_mbrs %}
+<div class="modal fade" id="launchModal{{ mbr.id }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Запуск партии: {{ mbr.product_name }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>MBR Версия: {{ mbr.version }}</p>
+                <p>Вы уверены, что хотите запустить новую партию?</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-action" data-bs-dismiss="modal">Отмена</button>
+                <form method="post" action="{% url 'launch_batch' mbr.id %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-confirm">Запустить партию</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+{% endblock %}
