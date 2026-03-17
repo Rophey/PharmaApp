@@ -30,9 +30,17 @@ class AuthMiddleware:
                         return redirect('users:admin_dashboard')
                     elif request.current_user.role == 'оператор':
                         return redirect('users:operator_dashboard')
+                    elif request.current_user.role == 'директор':
+                        return redirect('users:director_dashboard')
+                    elif request.current_user.role == 'технолог':
+                        return redirect('users:technologist_dashboard')
+                    elif request.current_user.role == 'главный технолог':
+                        return redirect('users:chief_technologist_dashboard')
+                    elif request.current_user.role == 'сотрудник ОКК':
+                        return redirect('users:qc_specialist_dashboard')
+                    elif request.current_user.role == 'начальник ОКК':
+                        return redirect('users:qc_chief_dashboard')
                     # ... остальные роли
-                    else:
-                        return redirect('users:dashboard')
             except User.DoesNotExist:
                 request.session.flush()
 

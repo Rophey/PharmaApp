@@ -12,14 +12,17 @@
     <div class="nav-tab" data-tab="current-batch">Текущая партия</div>
 </div>
 
+<!-- Вкладка 1: Список заданий -->
 <div class="tab-content active" id="tasks-tab">
     <h3>Текущие задания</h3>
+
     <table>
         <thead>
             <tr>
                 <th>Номер партии</th>
                 <th>Продукт</th>
                 <th>Операция</th>
+                <th>Сырьё</th>
                 <th>Статус</th>
                 <th>Действия</th>
             </tr>
@@ -31,39 +34,70 @@
                 <td>{{ task.ebr.mbr.product.product_name }}</td>
                 <td>{{ task.operation_name }}</td>
                 <td>
-                    <span class="indicator {% if task.status == 'in_progress' %}indicator-yellow{% else %}indicator-green{% endif %}"></span>
-                    {% if task.status == 'in_progress' %}В процессе{% else %}Готово{% endif %}
+                    <ul style="margin: 0; padding-left: 20px;">
+                        {% for material in task.ebr.mbr.raw_materials.all %}
+                        <li>{{ material.material_name }}</li>
+                        {% endfor %}
+                    </ul>
+                </td>
+                <td>
+                    <span class="indicator
+                        {% if task.status == 'in_progress' %}indicator-yellow
+                        {% elif task.status == 'completed' %}indicator-green
+                        {% else %}indicator-gray{% endif %}">
+                    </span>
+                    {% if task.status == 'pending' %}Ожидает
+                    {% elif task.status == 'in_progress' %}В процессе
+                    {% elif task.status == 'completed' %}Завершено
+                    {% endif %}
                 </td>
                 <td>
                     {% if task.status == 'pending' %}
-                        <button class="action-btn success">Начать</button>
-                    {% else %}
-                        <button class="action-btn success">Завершить</button>
+                        <button class="action-btn success" onclick="startOperation({{ task.id }})">Начать</button>
+                    {% elif task.status == 'in_progress' %}
+                        <button class="action-btn success" onclick="completeOperation({{ task.id }})">Завершить</button>
                     {% endif %}
                 </td>
             </tr>
             {% empty %}
             <tr>
-                <td colspan="5">Нет активных заданий</td>
+                <td colspan="6">Нет активных заданий</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
 
+<!-- Вкладка 2: Текущая партия -->
 <div class="tab-content" id="current-batch-tab">
     {% with current=active_tasks.first %}
     {% if current %}
-    <h3>Текущая партия: {{ current.ebr.batch_number }}</h3>
-    
+    <h3>Партия: {{ current.ebr.batch_number }}</h3>
+
+    <div class="card">
+        <h4>Информация о партии</h4>
+        <p><strong>Продукт:</strong> {{ current.ebr.mbr.product.product_name }}</p>
+        <p><strong>Текущая операция:</strong> {{ current.operation_name }}</p>
+        <p><strong>Статус:</strong> {{ current.status }}</p>
+    </div>
+
+    <div class="card">
+        <h4>Сырьё</h4>
+        <ul>
+            {% for material in current.ebr.mbr.raw_materials.all %}
+            <li>{{ material.material_name }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+
     <div class="card">
         <h4>Параметры процесса</h4>
         <table>
             <thead>
                 <tr>
                     <th>Параметр</th>
-                    <th>Значение</th>
-                    <th>Допустимый диапазон</th>
+                    <th>Целевое</th>
+                    <th>Текущее</th>
                     <th>Статус</th>
                 </tr>
             </thead>
@@ -71,19 +105,25 @@
                 {% for param in current.ebr.ebrparameter_set.all %}
                 <tr>
                     <td>{{ param.parameter.parameter_name }}</td>
+                    <td>{{ param.parameter.value }} {{ param.parameter.unit }}</td>
                     <td>
                         {% if param.actual_value %}
                             {{ param.actual_value }} {{ param.parameter.unit }}
                         {% else %}
-                            <input type="text" placeholder="Введите значение">
+                            <span class="indicator indicator-yellow"></span> Ожидает
                         {% endif %}
                     </td>
-                    <td>{{ param.parameter.value }} ±{{ param.parameter.tolerance }}%</td>
                     <td>
                         {% if param.actual_value %}
-                            <span class="indicator indicator-green"></span> Норма
+                            {% with diff=param.actual_value|add:"-"|add:param.parameter.value %}
+                                {% if diff < param.parameter.tolerance %}
+                                    <span class="indicator indicator-green"></span> Норма
+                                {% else %}
+                                    <span class="indicator indicator-red"></span> Отклонение
+                                {% endif %}
+                            {% endwith %}
                         {% else %}
-                            <span class="indicator indicator-yellow"></span> Ожидает ввода
+                            —
                         {% endif %}
                     </td>
                 </tr>
@@ -91,13 +131,18 @@
             </tbody>
         </table>
     </div>
-    
+
     <div class="form-group">
         <label>Комментарий оператора</label>
-        <textarea rows="3" placeholder="Введите комментарий к операции"></textarea>
+        <textarea id="operator-comment" rows="3" placeholder="Введите комментарий к операции"></textarea>
     </div>
-    
-    <button class="btn-success">Подтвердить завершение операции</button>
+
+    {% if current.status == 'in_progress' %}
+    <button class="btn-success" onclick="completeOperation({{ current.id }})">
+        Подтвердить завершение операции
+    </button>
+    {% endif %}
+
     {% else %}
     <p>Нет активной партии</p>
     {% endif %}
@@ -105,6 +150,21 @@
 </div>
 
 <script>
+function startOperation(taskId) {
+    fetch(`/api/operation/${taskId}/start/`, { method: 'POST' })
+        .then(() => location.reload());
+}
+
+function completeOperation(taskId) {
+    const comment = document.getElementById('operator-comment')?.value || '';
+    fetch(`/api/operation/${taskId}/complete/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment: comment })
+    }).then(() => location.reload());
+}
+
+// Переключение вкладок
 document.querySelectorAll('.nav-tab').forEach(tab => {
     tab.addEventListener('click', function() {
         document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
@@ -113,5 +173,12 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
         document.getElementById(this.dataset.tab + '-tab').classList.add('active');
     });
 });
+
+// Автообновление каждые 5 секунд
+setInterval(() => {
+    if (document.querySelector('[data-tab="current-batch"]').classList.contains('active')) {
+        location.reload();
+    }
+}, 5000);
 </script>
 {% endblock %}

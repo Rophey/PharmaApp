@@ -1,0 +1,23 @@
+# Удалить старые миграции (если есть)
+Remove-Item -Recurse -Force users/migrations/ -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force mbr/migrations/ -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force ebr/migrations/ -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force quality/migrations/ -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force audit/migrations/ -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force reports/migrations/ -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force equipment/migrations/ -ErrorAction SilentlyContinue
+
+# Создать миграции для всех приложений (в правильном порядке)
+python manage.py makemigrations users
+python manage.py makemigrations mbr
+python manage.py makemigrations ebr
+python manage.py makemigrations quality
+python manage.py makemigrations audit
+python manage.py makemigrations reports
+python manage.py makemigrations equipment
+
+# Применить все миграции
+python manage.py migrate
+
+# Запустить сервер
+python manage.py runserver

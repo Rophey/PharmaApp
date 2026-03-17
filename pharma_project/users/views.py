@@ -24,8 +24,6 @@ def login_view(request):
             return redirect('users:qc_chief_dashboard')
         elif user.role == 'директор':
             return redirect('users:director_dashboard')
-        else:
-            return redirect('users:dashboard')
 
     if request.method == 'POST':
         login = request.POST.get('login')
@@ -81,8 +79,6 @@ def login_view(request):
                     return redirect('users:qc_chief_dashboard')
                 elif user.role == 'директор':
                     return redirect('users:director_dashboard')
-                else:
-                    return redirect('users:dashboard')
             else:
                 messages.error(request, 'Неверный логин или пароль')
         except User.DoesNotExist:
@@ -112,16 +108,16 @@ def logout_view(request):
     return redirect('users:login')
 
 
-def dashboard(request):
-    if 'user_id' not in request.session:
-        return redirect('login')
-
-    user = User.objects.get(user_id=request.session['user_id'])
-
-    context = {
-        'user': user,
-    }
-    return render(request, 'users/dashboard.html', context)
+# def dashboard(request):
+#     if 'user_id' not in request.session:
+#         return redirect('login')
+#
+#     user = User.objects.get(user_id=request.session['user_id'])
+#
+#     context = {
+#         'user': user,
+#     }
+#     return render(request, 'users/dashboard.html', context)
 
 
 def admin_dashboard(request):
@@ -235,17 +231,144 @@ def technologist_dashboard(request):
 
 def chief_technologist_dashboard(request):
     if 'user_id' not in request.session or request.session.get('user_role') != 'главный технолог':
-        return redirect('login')
+        return redirect('users:login')
 
-    from mbr.models import MBR
+    from mbr.models import MBR, Parameter, RawMaterial, Product, Document, DocumentType, MBRStatus
+    from audit.models import Action, AuditLog
+    from datetime import datetime
 
     user = User.objects.get(user_id=request.session['user_id'])
 
+    # Обработка POST запросов
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        print(f"POST received: {request.POST}")  # Отладка
+
+        if action == 'create_mbr':
+            try:
+                # Получаем или создаём продукт
+                product_code = request.POST.get('product_code')
+                product_name = request.POST.get('product_name')
+
+                print(f"Creating MBR for product: {product_code} - {product_name}")
+
+                product, created = Product.objects.get_or_create(
+                    product_code=product_code,
+                    defaults={'product_name': product_name}
+                )
+
+                if created:
+                    print(f"Created new product: {product_code}")
+
+                # Создаём документ
+                doc_type = DocumentType.objects.get(type_name='MBR')
+                document = Document.objects.create(type=doc_type)
+                print(f"Created document: {document.document_id}")
+
+                # Получаем статус "Черновик"
+                draft_status = MBRStatus.objects.get(status_name='Черновик')
+
+                # Создаём MBR
+                mbr = MBR.objects.create(
+                    document=document,
+                    product=product,
+                    version=request.POST.get('version', 'v1'),
+                    status=draft_status,
+                    operations=request.POST.get('operations', ''),
+                    comments=request.POST.get('comments', '')
+                )
+                print(f"Created MBR: {mbr.document_id}")
+
+                # Добавляем сырьё
+                raw_material_ids = request.POST.getlist('raw_materials')
+                print(f"Raw materials: {raw_material_ids}")
+
+                for rm_id in raw_material_ids:
+                    if rm_id and rm_id.isdigit():
+                        try:
+                            material = RawMaterial.objects.get(pk=int(rm_id))
+                            mbr.raw_materials.add(material)
+                            print(f"Added raw material: {material.material_name}")
+                        except RawMaterial.DoesNotExist:
+                            print(f"Raw material {rm_id} not found")
+
+                # Добавляем параметры
+                for key, value in request.POST.items():
+                    if key.startswith('param_value_'):
+                        param_id = key.replace('param_value_', '')
+                        print(f"Processing parameter {param_id}")
+
+                        try:
+                            parameter = Parameter.objects.get(pk=param_id)
+                            mbr.parameters.add(parameter)
+
+                            # Обновляем значения параметров
+                            param_value = request.POST.get(f'param_value_{param_id}')
+                            param_tolerance = request.POST.get(f'param_tolerance_{param_id}')
+                            param_critical = request.POST.get(f'param_critical_{param_id}')
+
+                            print(f"Parameter values - value: {param_value}, tolerance: {param_tolerance}, critical: {param_critical}")
+
+                            if param_value:
+                                parameter.value = float(param_value)
+                            if param_tolerance:
+                                parameter.tolerance = float(param_tolerance)
+                            if param_critical:
+                                parameter.critical_deviation = float(param_critical)
+                            parameter.save()
+
+                        except Parameter.DoesNotExist:
+                            print(f"Parameter {param_id} not found")
+                        except ValueError as e:
+                            print(f"Invalid number format: {e}")
+
+                # Проверяем, была ли нажата кнопка утверждения
+                if request.POST.get('approve'):
+                    approved_status = MBRStatus.objects.get(status_name='Утверждён')
+                    mbr.status = approved_status
+                    mbr.approval_date = datetime.now().date()
+                    mbr.signed_by = user
+                    mbr.save()
+
+                    messages.success(request, f'MBR {product_code} утверждён')
+                else:
+                    messages.success(request, f'MBR {product_code} сохранён как черновик')
+
+                # Логируем действие
+                try:
+                    action_obj = Action.objects.get(action_name='Создание MBR')
+                    AuditLog.objects.create(
+                        user=user,
+                        action=action_obj,
+                        document=document,
+                        comment=f"Создан MBR для {product_code}"
+                    )
+                except Exception as e:
+                    print(f"Logging error: {e}")
+
+                # Перенаправляем на ту же страницу, чтобы избежать повторной отправки формы
+                return redirect('users:chief_technologist_dashboard')
+
+            except Exception as e:
+                print(f"Error creating MBR: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                messages.error(request, f'Ошибка при создании MBR: {str(e)}')
+
+    # Получаем данные для отображения
     mbrs = MBR.objects.all().select_related('product', 'status', 'signed_by').order_by('-created_at')
+    parameters = Parameter.objects.all().order_by('parameter_name')
+    raw_materials = RawMaterial.objects.all().order_by('material_name')
+    products = Product.objects.all().order_by('product_code')
+
+    print(f"Loaded {parameters.count()} parameters")  # Отладка
 
     context = {
         'user': user,
         'mbrs': mbrs,
+        'parameters': parameters,
+        'raw_materials': raw_materials,
+        'products': products,
     }
     return render(request, 'users/chief_technologist_dashboard.html', context)
 
@@ -321,3 +444,44 @@ def director_dashboard(request):
         'recent_reports': recent_reports,
     }
     return render(request, 'users/director_dashboard.html', context)
+
+
+from django.http import JsonResponse
+from mbr.models import MBR, Parameter
+
+
+def get_mbr_parameters(request, mbr_id):
+    """API для получения параметров MBR"""
+    if 'user_id' not in request.session:
+        return JsonResponse({'error': 'Not authenticated'}, status=401)
+
+    try:
+        mbr = MBR.objects.get(document_id=mbr_id)
+        data = {
+            'id': mbr.document_id,
+            'product_code': mbr.product.product_code,
+            'product_name': mbr.product.product_name,
+            'version': mbr.version,
+            'status': mbr.status.status_name,
+            'operations': mbr.operations,
+            'comments': mbr.comments,
+            'parameters': [
+                {
+                    'id': p.parameter_id,
+                    'name': p.parameter_name,
+                    'value': float(p.value),
+                    'unit': p.unit,
+                    'tolerance': float(p.tolerance),
+                    'critical': float(p.critical_deviation)
+                } for p in mbr.parameters.all()
+            ],
+            'raw_materials': [
+                {
+                    'id': rm.raw_material_id,
+                    'name': rm.material_name
+                } for rm in mbr.raw_materials.all()
+            ]
+        }
+        return JsonResponse(data)
+    except MBR.DoesNotExist:
+        return JsonResponse({'error': 'MBR not found'}, status=404)

@@ -17,10 +17,9 @@ class Action(models.Model):
 
 class AuditLog(models.Model):
     audit_id = models.AutoField(primary_key=True)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name='Пользователь')
+    user = models.ForeignKey('users.User', on_delete=models.CASCADE, verbose_name='Пользователь')
     action = models.ForeignKey(Action, on_delete=models.CASCADE, verbose_name='Действие')
-    document = models.ForeignKey(Document, on_delete=models.CASCADE, null=True, blank=True,
-                                 verbose_name='Документ')  # Должно быть null=True
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, null=True, blank=True, verbose_name='Документ')
     timestamp = models.DateTimeField(auto_now_add=True, verbose_name='Время')
     comment = models.TextField(blank=True, null=True, verbose_name='Комментарий')
     ip_address = models.GenericIPAddressField(null=True, blank=True, verbose_name='IP-адрес')

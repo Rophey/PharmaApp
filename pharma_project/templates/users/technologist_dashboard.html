@@ -8,14 +8,15 @@
     <div class="nav-tab" data-tab="batch-monitor">Мониторинг партий</div>
 </div>
 
+<!-- Вкладка 1: Запуск партии -->
 <div class="tab-content active" id="batch-start-tab">
     <h3>Запуск новой производственной партии</h3>
-    
+
     <div class="search-box">
-        <input type="text" placeholder="Код продукта">
-        <button>Найти</button>
+        <input type="text" id="product-search" placeholder="Код продукта">
+        <button onclick="searchProducts()">Найти</button>
     </div>
-    
+
     <table>
         <thead>
             <tr>
@@ -25,14 +26,14 @@
                 <th>Действия</th>
             </tr>
         </thead>
-        <tbody>
+        <tbody id="approved-mbrs-table">
             {% for mbr in approved_mbrs %}
             <tr>
                 <td>{{ mbr.product.product_code }}</td>
                 <td>{{ mbr.product.product_name }}</td>
                 <td>{{ mbr.version }}</td>
                 <td>
-                    <a href="{% url 'ebr:ebr_create' mbr.document_id %}" class="btn btn-success">Запустить партию</a>
+                    <button class="btn-success" onclick="startBatch({{ mbr.document_id }})">Запустить партию</button>
                 </td>
             </tr>
             {% empty %}
@@ -44,8 +45,10 @@
     </table>
 </div>
 
+<!-- Вкладка 2: Мониторинг партий -->
 <div class="tab-content" id="batch-monitor-tab">
     <h3>Мониторинг производственных партий</h3>
+
     <table>
         <thead>
             <tr>
@@ -53,6 +56,7 @@
                 <th>Продукт</th>
                 <th>Статус</th>
                 <th>Текущая операция</th>
+                <th>Прогресс</th>
                 <th>Действия</th>
             </tr>
         </thead>
@@ -62,14 +66,34 @@
                 <td>{{ ebr.batch_number }}</td>
                 <td>{{ ebr.mbr.product.product_name }}</td>
                 <td>
-                    <span class="status-badge status-{{ ebr.status.status_name|lower }}">
+                    <span class="status-badge
+                        {% if ebr.status.status_name == 'В работе' %}status-active
+                        {% elif ebr.status.status_name == 'Завершена' %}status-approved
+                        {% elif ebr.status.status_name == 'Заблокирована' %}status-blocked
+                        {% endif %}">
                         {{ ebr.status.status_name }}
                     </span>
                 </td>
-                <td>{% with op=ebr.operations.last %}{{ op.operation_name|default:'—' }}{% endwith %}</td>
                 <td>
-                    <a href="{% url 'ebr:ebr_detail' ebr.document_id %}" class="action-btn">Просмотр</a>
+                    {% with op=ebr.operations.last %}
+                        {{ op.operation_name|default:'—' }}
+                        {% if op.status == 'in_progress' %} (в процессе){% endif %}
+                    {% endwith %}
                 </td>
+                <td>
+                    {% if ebr.status.status_name == 'В работе' %}
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: {{ ebr.progress|default:'25' }}%"></div>
+                        </div>
+                    {% endif %}
+                </td>
+                <td>
+                    <button class="action-btn" onclick="showEbrDetail({{ ebr.document_id }})">Просмотр</button>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="6">Нет партий</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -77,6 +101,54 @@
 </div>
 
 <script>
+function searchProducts() {
+    const searchTerm = document.getElementById('product-search').value;
+    if (!searchTerm) {
+        location.reload();
+        return;
+    }
+
+    fetch(`/api/mbr/?search=${encodeURIComponent(searchTerm)}`)
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.getElementById('approved-mbrs-table');
+            tbody.innerHTML = '';
+            data.forEach(mbr => {
+                tbody.innerHTML += `
+                    <tr>
+                        <td>${mbr.product_code}</td>
+                        <td>${mbr.product_name}</td>
+                        <td>${mbr.version}</td>
+                        <td><button class="btn-success" onclick="startBatch(${mbr.id})">Запустить партию</button></td>
+                    </tr>
+                `;
+            });
+        });
+}
+
+function startBatch(mbrId) {
+    if (confirm('Запустить производство партии?')) {
+        fetch(`/api/ebr/create/${mbrId}/`, { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                alert(`Партия ${data.batch_number} создана`);
+                document.querySelector('[data-tab="batch-monitor"]').click();
+            });
+    }
+}
+
+function showEbrDetail(ebrId) {
+    window.location.href = `?ebr_detail=${ebrId}`;
+}
+
+// Автообновление мониторинга каждые 10 секунд
+setInterval(() => {
+    if (document.querySelector('[data-tab="batch-monitor"]').classList.contains('active')) {
+        location.reload();
+    }
+}, 10000);
+
+// Переключение вкладок
 document.querySelectorAll('.nav-tab').forEach(tab => {
     tab.addEventListener('click', function() {
         document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
@@ -86,4 +158,20 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
     });
 });
 </script>
+
+<style>
+.progress-bar {
+    width: 100px;
+    height: 10px;
+    background-color: #ecf0f1;
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background-color: var(--success-color);
+    transition: width 0.3s;
+}
+</style>
 {% endblock %}

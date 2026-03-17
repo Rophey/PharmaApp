@@ -53,16 +53,28 @@ TEMPLATES = [
 ]
 
 # Подключение к PostgreSQL (твой контейнер)
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'pharma_db',
+#         'USER': 'postgres',
+#         'PASSWORD': 'pharma',
+#         'HOST': 'localhost',
+#         'PORT': '5432',
+#     }
+# }
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'pharma_db',
-        'USER': 'postgres',
-        'PASSWORD': 'pharma',
+        'USER': 'pharma_user',
+        'PASSWORD': 'pharma_pass',
         'HOST': 'localhost',
         'PORT': '5432',
     }
 }
+
 
 # Настройки статики
 STATIC_URL = 'static/'

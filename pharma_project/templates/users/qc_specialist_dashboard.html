@@ -9,12 +9,13 @@
 
 <div class="nav-tabs">
     <div class="nav-tab active" data-tab="tasks">Задания ОКК</div>
-    <div class="nav-tab" data-tab="qc-data">Ввод данных контроля</div>
+    <div class="nav-tab" data-tab="testing">Лабораторные испытания</div>
 </div>
 
+<!-- Вкладка 1: Список заданий -->
 <div class="tab-content active" id="tasks-tab">
     <h3>Задания контроля качества</h3>
-    
+
     <table>
         <thead>
             <tr>
@@ -34,7 +35,7 @@
                 <td>{{ task.get_task_type_display }}</td>
                 <td>{{ task.due_date|date:"d.m.Y H:i" }}</td>
                 <td>
-                    <span class="status-badge 
+                    <span class="status-badge
                         {% if task.status == 'new' %}status-draft
                         {% elif task.status == 'in_progress' %}status-active
                         {% elif task.status == 'completed' %}status-approved
@@ -43,7 +44,9 @@
                     </span>
                 </td>
                 <td>
-                    <a href="{% url 'quality:qc_task_detail' task.id %}" class="action-btn">Выполнить</a>
+                    <button class="action-btn" onclick="showTaskDetail({{ task.id }})">
+                        {% if task.status == 'completed' %}Просмотр{% else %}Выполнить{% endif %}
+                    </button>
                 </td>
             </tr>
             {% empty %}
@@ -55,42 +58,146 @@
     </table>
 </div>
 
-<div class="tab-content" id="qc-data-tab">
-    <h3>Ввод данных контроля качества</h3>
-    
-    <form method="post" action="{% url 'quality:qc_submit_results' 0 %}">
+<!-- Вкладка 2: Лабораторные испытания -->
+<div class="tab-content" id="testing-tab">
+    <h3>Ввод результатов лабораторных испытаний</h3>
+
+    <form id="qc-test-form" method="post" enctype="multipart/form-data">
         {% csrf_token %}
-        <div class="form-group">
-            <label>Выберите партию</label>
-            <select name="ebr_id" required>
-                <option value="">-- Выберите партию --</option>
-                {% for task in tasks %}
-                <option value="{{ task.ebr.document_id }}">{{ task.ebr.batch_number }} - {{ task.ebr.mbr.product.product_name }}</option>
-                {% endfor %}
-            </select>
+        <input type="hidden" name="action" value="submit_qc_results">
+
+        <div class="card">
+            <div class="form-group">
+                <label>Выберите партию</label>
+                <select name="ebr_id" required onchange="loadBatchParameters(this.value)">
+                    <option value="">-- Выберите партию --</option>
+                    {% for task in tasks %}
+                        {% if task.task_type == 'testing' %}
+                        <option value="{{ task.ebr.document_id }}">{{ task.ebr.batch_number }} - {{ task.ebr.mbr.product.product_name }}</option>
+                        {% endif %}
+                    {% endfor %}
+                </select>
+            </div>
         </div>
-        
-        <div class="form-group">
-            <label>Визуальный контроль и лабораторные испытания</label>
-            <textarea name="visual_control" rows="4" required></textarea>
+
+        <div id="batch-parameters" style="display: none;">
+            <div class="card">
+                <h4>Параметры для тестирования</h4>
+                <table id="parameters-table">
+                    <thead>
+                        <tr>
+                            <th>Параметр</th>
+                            <th>Норма</th>
+                            <th>Результат</th>
+                            <th>Ед. изм.</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <div class="card">
+                <h4>Результаты испытаний</h4>
+
+                <div class="form-group">
+                    <label>Визуальный контроль</label>
+                    <textarea name="visual_control" rows="3" required></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>Протокол испытаний (PDF)</label>
+                    <input type="file" name="test_protocol" accept=".pdf,.jpg,.png">
+                </div>
+
+                <div class="form-group">
+                    <label>Комментарий</label>
+                    <textarea name="comments" rows="3"></textarea>
+                </div>
+            </div>
+
+            <div class="action-buttons">
+                <button type="submit" class="btn-success">Сохранить результаты</button>
+                <button type="submit" name="confirm" value="1" class="btn-success">Подтвердить выполнение</button>
+            </div>
         </div>
-        
-        <div class="form-group">
-            <label>Прикрепление файлов (сканы протоколов)</label>
-            <input type="file" name="qc_files" multiple>
-        </div>
-        
-        <div class="form-group">
-            <label>Комментарий</label>
-            <textarea name="comments" rows="3"></textarea>
-        </div>
-        
-        <button type="submit" class="btn-success">Сохранить данные</button>
-        <button type="submit" name="confirm" value="1" class="btn-success">Подтвердить выполнение операции</button>
     </form>
 </div>
 
+<!-- Модальное окно деталей задания -->
+<div id="task-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="close" onclick="closeTaskModal()">&times;</span>
+        <div id="task-detail-content"></div>
+    </div>
+</div>
+
 <script>
+function showTaskDetail(taskId) {
+    fetch(`/api/qc/task/${taskId}/`)
+        .then(response => response.json())
+        .then(data => {
+            const content = document.getElementById('task-detail-content');
+            content.innerHTML = `
+                <h2>Задание #${taskId}</h2>
+                <p><strong>Партия:</strong> ${data.batch_number}</p>
+                <p><strong>Продукт:</strong> ${data.product_name}</p>
+                <p><strong>Тип задания:</strong> ${data.task_type}</p>
+                <p><strong>Статус:</strong> ${data.status}</p>
+                <p><strong>Срок:</strong> ${data.due_date}</p>
+                <p><strong>Создано:</strong> ${data.created_by}</p>
+
+                ${data.results ? `
+                    <h3>Результаты:</h3>
+                    <p><strong>Визуальный контроль:</strong> ${data.results.visual_control}</p>
+                    <p><strong>Лабораторные:</strong> ${data.results.lab_results}</p>
+                    <p><strong>Дата:</strong> ${data.results.submitted_at}</p>
+                ` : ''}
+
+                ${data.status !== 'completed' ? `
+                    <button class="btn-success" onclick="startTesting(${taskId})">Начать тестирование</button>
+                ` : ''}
+            `;
+            document.getElementById('task-modal').style.display = 'block';
+        });
+}
+
+function closeTaskModal() {
+    document.getElementById('task-modal').style.display = 'none';
+}
+
+function loadBatchParameters(ebrId) {
+    if (!ebrId) {
+        document.getElementById('batch-parameters').style.display = 'none';
+        return;
+    }
+
+    fetch(`/api/ebr/${ebrId}/parameters/`)
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.querySelector('#parameters-table tbody');
+            tbody.innerHTML = '';
+
+            data.parameters.forEach(param => {
+                tbody.innerHTML += `
+                    <tr>
+                        <td>${param.name}</td>
+                        <td>${param.target} ±${param.tolerance}%</td>
+                        <td><input type="text" name="param_${param.id}" placeholder="Введите значение"></td>
+                        <td>${param.unit}</td>
+                    </tr>
+                `;
+            });
+
+            document.getElementById('batch-parameters').style.display = 'block';
+        });
+}
+
+function startTesting(taskId) {
+    document.querySelector('[data-tab="testing"]').click();
+    document.getElementById('batch-parameters').style.display = 'block';
+}
+
+// Переключение вкладок
 document.querySelectorAll('.nav-tab').forEach(tab => {
     tab.addEventListener('click', function() {
         document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));

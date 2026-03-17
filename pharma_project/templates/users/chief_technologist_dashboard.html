@@ -4,20 +4,22 @@
 <h1>Панель главного технолога</h1>
 
 <div class="nav-tabs">
-    <div class="nav-tab active" data-tab="mbr-management">Управление MBR</div>
-    <div class="nav-tab" data-tab="mbr-creation">Создание MBR</div>
+    <div class="nav-tab active" data-tab="mbr-list">Управление MBR</div>
+    <div class="nav-tab" data-tab="mbr-create">Создание MBR</div>
 </div>
 
-<div class="tab-content active" id="mbr-management-tab">
-    <h3>Управление электронными рецептурами (MBR)</h3>
-    
+<!-- Вкладка 1: Список MBR -->
+<div class="tab-content active" id="mbr-list-tab">
+    <h3>Электронные рецептуры (MBR)</h3>
+
     <table>
         <thead>
             <tr>
                 <th>Код продукта</th>
-                <th>Наименование продукта</th>
-                <th>Версия MBR</th>
+                <th>Наименование</th>
+                <th>Версия</th>
                 <th>Статус</th>
+                <th>Дата утверждения</th>
                 <th>Действия</th>
             </tr>
         </thead>
@@ -32,64 +34,160 @@
                         {{ mbr.status.status_name }}
                     </span>
                 </td>
+                <td>{{ mbr.approval_date|date:"d.m.Y"|default:"—" }}</td>
                 <td>
                     <div class="action-buttons">
-                        <a href="{% url 'mbr:mbr_detail' mbr.document_id %}" class="action-btn">Просмотр</a>
+                        <button class="action-btn" onclick="showMbrDetail({{ mbr.document_id }})">Просмотр</button>
                         {% if mbr.status.status_name == 'Черновик' %}
-                            <a href="{% url 'mbr:mbr_edit' mbr.document_id %}" class="action-btn">Редактировать</a>
-                            <a href="{% url 'mbr:mbr_approve' mbr.document_id %}" class="action-btn success">Утвердить</a>
+                            <button class="action-btn" onclick="editMbr({{ mbr.document_id }})">Редактировать</button>
+                            <button class="action-btn success" onclick="approveMbr({{ mbr.document_id }})">Утвердить</button>
                         {% endif %}
                         {% if mbr.status.status_name == 'Утверждён' %}
-                            <a href="{% url 'mbr:mbr_new_version' mbr.document_id %}" class="action-btn">Новая версия</a>
+                            <button class="action-btn" onclick="newMbrVersion({{ mbr.document_id }})">Новая версия</button>
                         {% endif %}
                     </div>
                 </td>
             </tr>
             {% empty %}
             <tr>
-                <td colspan="5">Нет MBR</td>
+                <td colspan="6">Нет MBR</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
 
-<div class="tab-content" id="mbr-creation-tab">
-    <h3>Создание новой рецептуры (MBR)</h3>
-    
-    <form method="post" action="{% url 'mbr:mbr_create' %}">
+<!-- Вкладка 2: Создание MBR -->
+<!-- Вкладка 2: Создание MBR -->
+<div class="tab-content" id="mbr-create-tab">
+    <h3>Создание новой рецептуры</h3>
+
+    <form id="mbr-form" method="post" action="{% url 'users:chief_technologist_dashboard' %}">
         {% csrf_token %}
-        <div class="form-group">
-            <label>Наименование продукта</label>
-            <input type="text" name="product_name" required>
+        <input type="hidden" name="action" value="create_mbr">
+
+        <div class="card">
+            <h4>Основная информация</h4>
+
+            <div class="form-group">
+                <label>Наименование продукта *</label>
+                <input type="text" name="product_name" id="product_name" required
+                       pattern="[А-Яа-яA-Za-z0-9\s]+"
+                       title="Только буквы и цифры">
+                <div class="error-message" id="product_name_error"></div>
+            </div>
+
+            <div class="form-group">
+                <label>Код продукта *</label>
+                <input type="text" name="product_code" id="product_code" required
+                       pattern="[A-Z0-9-]+"
+                       title="Только латиница, цифры и дефис">
+                <div class="error-message" id="product_code_error"></div>
+            </div>
+
+            <div class="form-group">
+                <label>Версия</label>
+                <input type="text" name="version" id="version" value="v1" readonly>
+            </div>
         </div>
-        
-        <div class="form-group">
-            <label>Код продукта</label>
-            <input type="text" name="product_code" required>
+
+        <div class="card">
+            <h4>Технологические операции *</h4>
+            <textarea name="operations" id="operations" rows="5" required></textarea>
+            <div class="error-message" id="operations_error"></div>
         </div>
-        
-        <div class="form-group">
-            <label>Версия MBR</label>
-            <input type="text" name="version" value="v1" readonly>
+
+        <div class="card">
+            <h4>Сырьё</h4>
+
+            <div class="search-box">
+                <input type="text" id="raw-material-search" placeholder="Поиск сырья">
+                <button type="button" onclick="searchRawMaterial()">Найти</button>
+            </div>
+
+            <table id="raw-materials-table">
+                <thead>
+                    <tr>
+                        <th>Наименование</th>
+                        <th>Действие</th>
+                    </tr>
+                </thead>
+                <tbody id="selected-raw-materials">
+                    <!-- JS будет добавлять сюда -->
+                </tbody>
+            </table>
         </div>
-        
-        <div class="form-group">
-            <label>Описание технологических операций</label>
-            <textarea name="operations" rows="4" required></textarea>
+
+        <div class="card">
+            <h4>Параметры процесса</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Параметр</th>
+                        <th>Значение</th>
+                        <th>Ед. изм.</th>
+                        <th>Допуск (%)</th>
+                        <th>Крит. отклонение (%)</th>
+                    </tr>
+                </thead>
+                <tbody id="parameters-tbody">
+                    {% for param in parameters %}
+                    <tr>
+                        <td>{{ param.parameter_name }}</td>
+                        <td>
+                            <input type="text"
+                                   name="param_value_{{ param.parameter_id }}"
+                                   id="param_value_{{ param.parameter_id }}"
+                                   value="{{ param.value }}"
+                                   required>
+                        </td>
+                        <td>{{ param.unit }}</td>
+                        <td>
+                            <input type="text"
+                                   name="param_tolerance_{{ param.parameter_id }}"
+                                   id="param_tolerance_{{ param.parameter_id }}"
+                                   value="{{ param.tolerance }}"
+                                   required>
+                        </td>
+                        <td>
+                            <input type="text"
+                                   name="param_critical_{{ param.parameter_id }}"
+                                   id="param_critical_{{ param.parameter_id }}"
+                                   value="{{ param.critical_deviation }}"
+                                   required>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5">Нет доступных параметров. Добавьте их через панель администратора.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
-        
-        <div class="form-group">
-            <label>Комментарий к версии</label>
-            <textarea name="comments" rows="3"></textarea>
+
+        <div class="card">
+            <h4>Комментарий</h4>
+            <textarea name="comments" id="comments" rows="3"></textarea>
         </div>
-        
-        <button type="submit" class="btn-success">Сохранить черновик</button>
-        <button type="submit" name="approve" value="1" class="btn-success">Утвердить MBR</button>
+
+        <div class="action-buttons">
+            <button type="submit" name="save_draft" value="1" class="btn-success">Сохранить черновик</button>
+            <button type="submit" name="approve" value="1" class="btn-success">Утвердить MBR</button>
+        </div>
     </form>
 </div>
 
+<!-- Модальное окно для просмотра MBR -->
+<div id="mbr-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal()">&times;</span>
+        <div id="mbr-detail-content"></div>
+    </div>
+</div>
+
 <script>
+// Переключение вкладок
 document.querySelectorAll('.nav-tab').forEach(tab => {
     tab.addEventListener('click', function() {
         document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
@@ -98,5 +196,157 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
         document.getElementById(this.dataset.tab + '-tab').classList.add('active');
     });
 });
+
+// Поиск сырья
+function searchRawMaterial() {
+    const searchTerm = document.getElementById('raw-material-search').value.trim();
+    if (!searchTerm) {
+        alert('Введите название сырья для поиска');
+        return;
+    }
+
+    // В реальном проекте здесь должен быть AJAX запрос к серверу
+    // Для демо добавим тестовые данные
+    const mockMaterials = [
+        { id: 1, name: 'Ацетилсалициловая кислота' },
+        { id: 2, name: 'Парацетамол' },
+        { id: 3, name: 'Ибупрофен' },
+        { id: 4, name: 'Крахмал кукурузный' },
+        { id: 5, name: 'Целлюлоза микрокристаллическая' },
+        { id: 6, name: 'Стеарат магния' },
+    ];
+
+    const filtered = mockMaterials.filter(m =>
+        m.name.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    const tbody = document.getElementById('selected-raw-materials');
+
+    filtered.forEach(material => {
+        // Проверяем, нет ли уже такого
+        const existing = Array.from(tbody.querySelectorAll('input')).some(
+            input => input.value == material.id
+        );
+
+        if (!existing) {
+            const row = tbody.insertRow();
+            row.innerHTML = `
+                <td>${material.name}</td>
+                <td><button type="button" class="action-btn btn-danger" onclick="this.closest('tr').remove()">Удалить</button></td>
+                <input type="hidden" name="raw_materials" value="${material.id}">
+            `;
+        }
+    });
+}
+
+// Валидация формы перед отправкой
+document.getElementById('mbr-form').addEventListener('submit', function(e) {
+    // Сброс ошибок
+    document.querySelectorAll('.error-message').forEach(el => el.textContent = '');
+
+    let hasError = false;
+
+    // Проверка обязательных полей
+    const productName = document.getElementById('product_name');
+    const productCode = document.getElementById('product_code');
+    const operations = document.getElementById('operations');
+
+    if (!productName.value.trim()) {
+        document.getElementById('product_name_error').textContent = 'Введите наименование продукта';
+        hasError = true;
+    }
+
+    if (!productCode.value.trim()) {
+        document.getElementById('product_code_error').textContent = 'Введите код продукта';
+        hasError = true;
+    } else if (!/^[A-Z0-9-]+$/.test(productCode.value)) {
+        document.getElementById('product_code_error').textContent = 'Только латиница, цифры и дефис';
+        hasError = true;
+    }
+
+    if (!operations.value.trim()) {
+        document.getElementById('operations_error').textContent = 'Введите описание операций';
+        hasError = true;
+    }
+
+    // Проверка параметров
+    const paramRows = document.querySelectorAll('#parameters-tbody tr');
+    if (paramRows.length === 0) {
+        alert('Добавьте параметры процесса');
+        hasError = true;
+    }
+
+    if (hasError) {
+        e.preventDefault();
+        return false;
+    }
+
+    // Показываем сообщение о сохранении
+    const submitBtn = e.submitter;
+    const originalText = submitBtn.textContent;
+    submitBtn.textContent = 'Сохранение...';
+    submitBtn.disabled = true;
+
+    // Форма отправится автоматически после этой функции
+    // Разблокируем кнопку через 5 секунд на случай ошибки
+    setTimeout(() => {
+        submitBtn.textContent = originalText;
+        submitBtn.disabled = false;
+    }, 5000);
+});
+
+// Добавляем индикатор загрузки
+const style = document.createElement('style');
+style.textContent = `
+    .btn-success:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .error-message {
+        color: var(--danger-color);
+        font-size: 0.85rem;
+        margin-top: 5px;
+    }
+
+    input.error, textarea.error {
+        border-color: var(--danger-color);
+    }
+`;
+document.head.appendChild(style);
 </script>
+
+<style>
+.modal {
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.4);
+}
+
+.modal-content {
+    background-color: white;
+    margin: 5% auto;
+    padding: 20px;
+    border-radius: 8px;
+    width: 80%;
+    max-width: 800px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.close {
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.close:hover {
+    color: var(--danger-color);
+}
+</style>
 {% endblock %}
