@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+
+{% block title %}Электронные подписи{% endblock %}
+
+{% block content %}
+<div class="interface-section">
+    <h2>Электронные подписи</h2>
+
+    <table id="signatures-table">
+        <thead>
+            <tr>
+                <th>Дата подписания</th>
+                <th>Пользователь</th>
+                <th>Документ</th>
+                <th>Хэш подписи</th>
+                <th>Комментарий</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for signature in signatures %}
+            <tr>
+                <td>{{ signature.signature_date|date:"d.m.Y H:i:s" }}</td>
+                <td>{{ signature.user.get_full_name }}</td>
+                <td>Документ #{{ signature.document.document_id }} ({{ signature.document.type.type_name }})</td>
+                <td style="font-family: monospace; font-size: 0.85rem;">{{ signature.signature_hash|truncatechars:30 }}</td>
+                <td>{{ signature.comment|default:"—" }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5">Нет подписей</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -1,7 +1,9 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
+from django.http import JsonResponse
 from .models import EBR, EBRStatus, BatchOperation, EBRParameter
 from mbr.models import MBR, Parameter, Document, DocumentType
+import datetime
 
 
 def ebr_list(request):
@@ -24,7 +26,6 @@ def ebr_create(request, mbr_id):
 
     if request.method == 'POST':
         # Генерация номера партии (упрощённо)
-        import datetime
         now = datetime.datetime.now()
         batch_number = f"B-{now.year}-{now.strftime('%m%d')}-{EBR.objects.count() + 1:03d}"
 
@@ -42,16 +43,29 @@ def ebr_create(request, mbr_id):
             operator=request.current_user
         )
 
-        # Копируем параметры из MBR
-        for param in mbr.parameters.all():
+        # Копируем параметры из MBRParameter (собственные значения этого MBR)
+        from mbr.models import MBRParameter
+        mbr_params = MBRParameter.objects.filter(mbr=mbr).select_related('parameter')
+        for mbr_param in mbr_params:
             EBRParameter.objects.create(
                 ebr=ebr,
-                parameter=param
+                parameter=mbr_param.parameter,
+                actual_value=None  # Фактические значения будут введены позже
             )
 
         messages.success(request, f'Партия {batch_number} создана')
+        
+        # Если AJAX — возвращаем JSON
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({
+                'success': True,
+                'batch_number': batch_number,
+                'ebr_id': ebr.document_id
+            })
+        
         return redirect('ebr:ebr_detail', pk=ebr.document_id)
 
+    # Если GET — перенаправляем на список
     return redirect('ebr:ebr_list')
 
 

@@ -1,0 +1,114 @@
+{% extends 'base.html' %}
+
+{% block title %}MBR: {{ mbr.product.product_code }} {{ mbr.version }}{% endblock %}
+
+{% block content %}
+<div class="interface-section">
+    <h2>Мастер-рецептура: {{ mbr.product.product_code }} - {{ mbr.version }}</h2>
+    
+    <div class="card">
+        <h3>Основная информация</h3>
+        <table>
+            <tr>
+                <th style="width: 250px;">Наименование продукта</th>
+                <td>{{ mbr.product.product_name }}</td>
+            </tr>
+            <tr>
+                <th>Код продукта</th>
+                <td>{{ mbr.product.product_code }}</td>
+            </tr>
+            <tr>
+                <th>Версия</th>
+                <td>{{ mbr.version }}</td>
+            </tr>
+            <tr>
+                <th>Статус</th>
+                <td>
+                    {% if mbr.status.status_name == 'Утверждён' %}
+                        <span class="status-badge status-approved">{{ mbr.status.status_name }}</span>
+                    {% else %}
+                        <span class="status-badge status-draft">{{ mbr.status.status_name }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+            <tr>
+                <th>Дата утверждения</th>
+                <td>{{ mbr.approval_date|default:"—" }}</td>
+            </tr>
+            <tr>
+                <th>Утвердил</th>
+                <td>{{ mbr.signed_by.get_full_name|default:"—" }}</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="card">
+        <h3>Сырьё</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Наименование сырья</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for material in mbr.raw_materials.all %}
+                <tr>
+                    <td>{{ material.material_name }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="1">Нет сырья</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h3>Параметры</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Параметр</th>
+                    <th>Значение</th>
+                    <th>Допустимое отклонение (%)</th>
+                    <th>Критическое отклонение (%)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for param in mbr.parameters.all %}
+                <tr>
+                    <td>{{ param.parameter_name }} ({{ param.unit }})</td>
+                    <td>{{ param.value }}</td>
+                    <td>{{ param.tolerance }}%</td>
+                    <td>{{ param.critical_deviation }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h3>Технологические операции</h3>
+        <div style="white-space: pre-wrap; padding: 10px; background: #f9f9f9; border-radius: 4px;">
+            {{ mbr.operations }}
+        </div>
+    </div>
+
+    {% if mbr.comments %}
+    <div class="card">
+        <h3>Комментарий к версии</h3>
+        <p>{{ mbr.comments }}</p>
+    </div>
+    {% endif %}
+
+    <div style="margin-top: 20px;" class="action-buttons">
+        {% if user.user_role == 'главный технолог' and mbr.status.status_name == 'Черновик' %}
+            <a href="{% url 'mbr:mbr_edit' mbr.document_id %}" class="btn btn-primary">Редактировать</a>
+            <a href="{% url 'mbr:mbr_approve' mbr.document_id %}" class="btn btn-success">Утвердить</a>
+        {% endif %}
+        {% if user.user_role == 'главный технолог' and mbr.status.status_name == 'Утверждён' %}
+            <a href="{% url 'mbr:mbr_new_version' mbr.document_id %}" class="btn btn-success">Новая версия</a>
+        {% endif %}
+        <a href="{% url 'mbr:mbr_list' %}" class="btn">Назад к списку</a>
+    </div>
+</div>
+{% endblock %}

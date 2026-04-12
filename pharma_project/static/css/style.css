@@ -6,9 +6,13 @@
             --danger-color: #e74c3c;
             --light-color: #ecf0f1;
             --dark-color: #34495e;
-            --btn-primary: #2a83bd;
-            --btn-success: #219854;
-            --btn-danger: #c0392b;
+            /* Цвета кнопок по ТЗ 4.1.6 */
+            --btn-primary: #2a83bd;      /* Войти, Выйти, Выполнить, Найти, Просмотр, Редактировать, Сохранить */
+            --btn-success: #219854;      /* Применить решение, Подписать ЭП, Сохранить, Подтвердить выполнение, Утвердить, Запустить партию */
+            --btn-danger: #e74c3c;       /* Деактивировать */
+            --alert-warning: #27ae60;    /* Оповещение предупреждение */
+            --alert-deviation: #f39c12;  /* Оповещение отклонение */
+            --alert-critical: #e74c3c;   /* Оповещение критическое отклонение */
         }
         * {
             margin: 0;
@@ -315,4 +319,69 @@
             .system-config {
                 grid-template-columns: 1fr;
             }
+        }
+
+        /* Дополнительные стили для кнопок и оповещений по ТЗ 4.1.6 */
+        .btn-warning {
+            background-color: var(--warning-color) !important;
+            color: white;
+        }
+        .btn-warning:hover {
+            background-color: #e67e22 !important;
+        }
+
+        /* Оповещения по ТЗ */
+        .alert-warning-notification {
+            background-color: var(--alert-warning);
+            color: white;
+            border: 1px solid #219652;
+        }
+        .alert-deviation-notification {
+            background-color: var(--alert-deviation);
+            color: white;
+            border: 1px solid #e67e22;
+        }
+        .alert-critical-notification {
+            background-color: var(--alert-critical);
+            color: white;
+            border: 1px solid #c0392b;
+            animation: pulse-critical 2s infinite;
+        }
+
+        @keyframes pulse-critical {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.8; }
+        }
+
+        /* Индикаторы параметров */
+        .param-indicator {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        .param-normal {
+            background-color: var(--alert-warning);
+            color: white;
+        }
+        .param-warning {
+            background-color: var(--alert-deviation);
+            color: white;
+        }
+        .param-critical {
+            background-color: var(--alert-critical);
+            color: white;
+        }
+
+        /* Блокировка операций */
+        .operation-blocked {
+            background-color: #ffe6e6;
+            border-left: 4px solid var(--alert-critical);
+        }
+        .operation-completed {
+            border-left: 4px solid var(--alert-warning);
+        }
+        .operation-in-progress {
+            border-left: 4px solid var(--alert-deviation);
         }

@@ -56,7 +56,7 @@ class User(AbstractBaseUser):
     REQUIRED_FIELDS = ['last_name', 'first_name', 'role']
 
     class Meta:
-        db_table = '"User"'
+        db_table = 'users_user'
         verbose_name = 'Пользователь'
         verbose_name_plural = 'Пользователи'
 

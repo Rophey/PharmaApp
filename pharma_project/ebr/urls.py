@@ -10,4 +10,6 @@ urlpatterns = [
     path('<int:pk>/start/', views.ebr_start, name='ebr_start'),
     path('<int:pk>/complete-operation/', views.complete_operation, name='complete_operation'),
     path('<int:pk>/add-data/', views.ebr_add_data, name='ebr_add_data'),
+    # API endpoints
+    path('api/create/<int:mbr_id>/', views.ebr_create, name='ebr_create'),
 ]

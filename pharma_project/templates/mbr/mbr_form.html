@@ -1,0 +1,263 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if mbr %}Редактирование MBR{% else %}Создание MBR{% endif %}{% endblock %}
+
+{% block content %}
+<div class="interface-section">
+    <h2>{% if mbr %}Редактирование MBR{% else %}Создание MBR{% endif %}</h2>
+    
+    <form method="post" id="mbr-form">
+        {% csrf_token %}
+        
+        <!-- Продукт -->
+        <div class="form-group">
+            <label for="product_name">Наименование продукта</label>
+            <input type="text" id="product_name" name="product_name" 
+                   value="{{ mbr.product.product_name|default:'' }}"
+                   placeholder="Введите наименование продукта">
+            <div class="error-message" id="product-name-error"></div>
+        </div>
+
+        <div class="form-group">
+            <label for="product_code">Код продукта</label>
+            <input type="text" id="product_code" name="product_code"
+                   value="{{ mbr.product.product_code|default:'' }}"
+                   placeholder="Введите код продукта">
+            <div class="error-message" id="product-code-error"></div>
+        </div>
+
+        {% if mbr %}
+        <div class="form-group">
+            <label>Версия MBR</label>
+            <input type="text" value="{{ mbr.version }}" disabled>
+        </div>
+        {% endif %}
+
+        <!-- Сырьё -->
+        <div class="form-group">
+            <label>Выбранное сырьё</label>
+            <div class="search-box" style="margin-bottom: 10px;">
+                <input type="text" id="raw-material-search" placeholder="Поиск сырья...">
+                <button type="button" onclick="searchRawMaterials()">Найти</button>
+            </div>
+            <div id="raw-materials-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 10px;">
+                {% for material in raw_materials %}
+                <div class="raw-material-item" data-id="{{ material.id }}" data-name="{{ material.material_name|lower }}">
+                    <input type="checkbox" name="raw_materials" value="{{ material.id }}" 
+                           {% if mbr and material in mbr.raw_materials.all %}checked{% endif %}>
+                    {{ material.material_name }}
+                </div>
+                {% endfor %}
+            </div>
+            <table id="selected-materials-table">
+                <thead>
+                    <tr>
+                        <th>Наименование</th>
+                        <th>Действие</th>
+                    </tr>
+                </thead>
+                <tbody id="selected-materials">
+                    {% if mbr %}
+                        {% for material in mbr.raw_materials.all %}
+                        <tr data-id="{{ material.id }}">
+                            <td>{{ material.material_name }}</td>
+                            <td><button type="button" class="btn btn-danger" style="padding: 5px 10px;" onclick="removeMaterial(this, {{ material.id }})">Удалить</button></td>
+                        </tr>
+                        {% endfor %}
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Технологические операции -->
+        <div class="form-group">
+            <label for="operations">Описание технологических операций</label>
+            <textarea id="operations" name="operations" rows="6"
+                      placeholder="Введите описание операций">{{ mbr.operations|default:'' }}</textarea>
+            <div class="error-message" id="operations-error"></div>
+        </div>
+
+        <!-- Параметры -->
+        <div class="form-group">
+            <label>Параметры</label>
+            <table id="parameters-table">
+                <thead>
+                    <tr>
+                        <th>Параметр</th>
+                        <th>Значение</th>
+                        <th>Допустимое отклонение (%)</th>
+                        <th>Критическое отклонение (%)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for param in parameters %}
+                    <tr>
+                        <td>{{ param.parameter_name }} ({{ param.unit }})</td>
+                        <td>
+                            <input type="text" name="param_value_{{ param.id }}" 
+                                   value="{{ param.value|default:'' }}"
+                                   class="param-value" data-param-id="{{ param.id }}"
+                                   placeholder="> 0">
+                        </td>
+                        <td>
+                            <input type="text" name="param_tolerance_{{ param.id }}"
+                                   value="{{ param.tolerance|default:'' }}"
+                                   class="param-tolerance" data-param-id="{{ param.id }}"
+                                   placeholder="%">
+                        </td>
+                        <td>
+                            <input type="text" name="param_critical_{{ param.id }}"
+                                   value="{{ param.critical_deviation|default:'' }}"
+                                   class="param-critical" data-param-id="{{ param.id }}"
+                                   placeholder="%">
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Комментарий -->
+        <div class="form-group">
+            <label for="comments">Комментарий к версии</label>
+            <textarea id="comments" name="comments" rows="3"
+                      placeholder="Введите комментарий">{{ mbr.comments|default:'' }}</textarea>
+            <div class="error-message" id="comments-error"></div>
+        </div>
+
+        <div style="margin-top: 20px;">
+            <button type="submit" class="btn btn-primary">Сохранить</button>
+            {% if mbr and mbr.status.status_name == 'Черновик' %}
+                <button type="button" class="btn btn-success" onclick="approveMBR()">Утвердить</button>
+            {% endif %}
+            <a href="{% url 'mbr:mbr_list' %}" class="btn">Отмена</a>
+        </div>
+    </form>
+</div>
+
+<script>
+// Валидация по ТЗ 4.2.2.1.1
+const latinCyrillicDigitsRegex = /^[a-zA-Zа-яА-Я0-9]+$/;
+const latinDigitsDashRegex = /^[a-zA-Z0-9-]+$/;
+const extendedCharsRegex = /^[a-zA-Zа-яА-Я0-9\s\-._,;:!?()]+$/;
+
+function validateProductName() {
+    const input = document.getElementById('product_name');
+    const error = document.getElementById('product-name-error');
+    const value = input.value.trim();
+    
+    if (!value || !latinCyrillicDigitsRegex.test(value)) {
+        input.classList.add('error');
+        error.textContent = 'Поле «Наименование продукта» может содержать только латинские буквы, русские буквы и цифры и не может быть пустым';
+        return false;
+    }
+    input.classList.remove('error');
+    error.textContent = '';
+    return true;
+}
+
+function validateProductCode() {
+    const input = document.getElementById('product_code');
+    const error = document.getElementById('product-code-error');
+    const value = input.value.trim();
+    
+    if (!value || !latinDigitsDashRegex.test(value)) {
+        input.classList.add('error');
+        error.textContent = 'Поле «Код продукта» может содержать только латинские буквы, цифры, минус (-) и не может быть пустым';
+        return false;
+    }
+    input.classList.remove('error');
+    error.textContent = '';
+    return true;
+}
+
+function validateTextField(fieldId, errorId) {
+    const input = document.getElementById(fieldId);
+    const error = document.getElementById(errorId);
+    const value = input.value;
+    
+    if (value && !extendedCharsRegex.test(value)) {
+        input.classList.add('error');
+        error.textContent = 'Используются неразрешённые символы';
+        return false;
+    }
+    input.classList.remove('error');
+    error.textContent = '';
+    return true;
+}
+
+function validateNumericField(input) {
+    const value = input.value.replace(',', '.');
+    const num = parseFloat(value);
+    return !isNaN(num) && num > 0;
+}
+
+function validateAllParameters() {
+    let valid = true;
+    document.querySelectorAll('.param-value, .param-tolerance, .param-critical').forEach(input => {
+        if (input.value && !validateNumericField(input)) {
+            input.classList.add('error');
+            valid = false;
+        } else {
+            input.classList.remove('error');
+        }
+    });
+    return valid;
+}
+
+function validateMBRForm() {
+    let valid = true;
+    
+    if (!validateProductName()) valid = false;
+    if (!validateProductCode()) valid = false;
+    if (!validateTextField('operations', 'operations-error')) valid = false;
+    if (!validateTextField('comments', 'comments-error')) valid = false;
+    if (!validateAllParameters()) valid = false;
+    
+    return valid;
+}
+
+document.getElementById('mbr-form').addEventListener('submit', function(e) {
+    if (!validateMBRForm()) {
+        e.preventDefault();
+        alert('Внесённая информация не является полной или содержит ошибки');
+    }
+});
+
+function approveMBR() {
+    if (!validateMBRForm()) {
+        alert('Внесённая информация не является полной или содержит ошибки');
+        return;
+    }
+    if (confirm('Вы уверены, что хотите утвердить MBR?')) {
+        const form = document.getElementById('mbr-form');
+        form.action = "{% url 'mbr:mbr_approve' mbr.document_id %}";
+        form.submit();
+    }
+}
+
+function searchRawMaterials() {
+    const searchTerm = document.getElementById('raw-material-search').value.toLowerCase();
+    const items = document.querySelectorAll('.raw-material-item');
+    
+    items.forEach(item => {
+        const name = item.getAttribute('data-name');
+        item.style.display = name.includes(searchTerm) ? '' : 'none';
+    });
+}
+
+function removeMaterial(btn, materialId) {
+    const row = btn.closest('tr');
+    row.remove();
+    
+    const checkbox = document.querySelector(`.raw-material-item[data-id="${materialId}"] input`);
+    if (checkbox) checkbox.checked = false;
+}
+
+// Real-time validation
+document.getElementById('product_name').addEventListener('blur', validateProductName);
+document.getElementById('product_code').addEventListener('blur', validateProductCode);
+document.getElementById('operations').addEventListener('blur', function() { validateTextField('operations', 'operations-error'); });
+document.getElementById('comments').addEventListener('blur', function() { validateTextField('comments', 'comments-error'); });
+</script>
+{% endblock %}

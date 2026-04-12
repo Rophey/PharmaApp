@@ -10,4 +10,5 @@ urlpatterns = [
     path('<int:pk>/edit/', views.mbr_edit, name='mbr_edit'),
     path('<int:pk>/approve/', views.mbr_approve, name='mbr_approve'),
     path('<int:pk>/new-version/', views.mbr_new_version, name='mbr_new_version'),
+    path('<int:pk>/delete/', views.mbr_delete, name='mbr_delete'),
 ]

@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+
+{% block title %}Правила генерации номеров партий{% endblock %}
+
+{% block content %}
+<div class="interface-section">
+    <h2>Настройка правил генерации номеров партий</h2>
+
+    <div class="card">
+        <h3>Текущее правило</h3>
+        <div style="padding: 15px; background: #f5f5f5; border-radius: 4px; margin-bottom: 20px;">
+            <strong>{{ current_rule }}</strong>
+        </div>
+
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-group">
+                <label for="batch_rule">Выберите правило</label>
+                <select id="batch_rule" name="batch_rule" required>
+                    <option value="B-<Код продукта>-<Год>-<Номер партии>" 
+                            {% if current_rule == 'B-<Код продукта>-<Год>-<Номер партии>' %}selected{% endif %}>
+                        B-<Код продукта>-<Год>-<Номер партии>
+                    </option>
+                    <option value="B-<Код продукта>-<Номер партии>"
+                            {% if current_rule == 'B-<Код продукта>-<Номер партии>' %}selected{% endif %}>
+                        B-<Код продукта>-<Номер партии>
+                    </option>
+                </select>
+            </div>
+
+            <button type="submit" class="btn btn-success">Применить правило</button>
+            <a href="{% url 'users:admin_dashboard' %}" class="btn">Назад</a>
+        </form>
+    </div>
+
+    <div class="card">
+        <h3>Описание правил</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Правило</th>
+                    <th>Пример</th>
+                    <th>Описание</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>B-<Код продукта>-<Год>-<Номер партии></code></td>
+                    <td><code>B-ASP-2026-001</code></td>
+                    <td>Формат включает код продукта, год и порядковый номер партии</td>
+                </tr>
+                <tr>
+                    <td><code>B-<Код продукта>-<Номер партии></code></td>
+                    <td><code>B-ASP-001</code></td>
+                    <td>Упрощённый формат без года</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,134 @@
+{% extends 'base.html' %}
+
+{% block title %}Задание ОКК #{{ task.id }}{% endblock %}
+
+{% block content %}
+<div class="interface-section">
+    <h2>Задание контроля качества #{{ task.id }}</h2>
+
+    <div class="card">
+        <h3>Информация о задании</h3>
+        <table>
+            <tr>
+                <th style="width: 250px;">Партия</th>
+                <td>{{ task.ebr.batch_number }} - {{ task.ebr.mbr.product.product_name }}</td>
+            </tr>
+            <tr>
+                <th>Тип задания</th>
+                <td>
+                    {% if task.task_type == 'sampling' %}
+                        Отбор пробы
+                    {% elif task.task_type == 'testing' %}
+                        Лабораторные испытания
+                    {% elif task.task_type == 'review' %}
+                        Проверка документации
+                    {% endif %}
+                </td>
+            </tr>
+            <tr>
+                <th>Статус</th>
+                <td>
+                    {% if task.status == 'new' %}
+                        <span class="status-badge status-active">Новое</span>
+                    {% elif task.status == 'in_progress' %}
+                        <span class="status-badge" style="background: #fff3cd; color: #856404;">В работе</span>
+                    {% elif task.status == 'completed' %}
+                        <span class="status-badge status-approved">Завершено</span>
+                    {% elif task.status == 'rejected' %}
+                        <span class="status-badge status-blocked">Отклонено</span>
+                    {% endif %}
+                </td>
+            </tr>
+            <tr>
+                <th>Срок выполнения</th>
+                <td>{{ task.due_date|date:"d.m.Y H:i" }}</td>
+            </tr>
+        </table>
+    </div>
+
+    {% if task.status != 'completed' and user.user_role == 'сотрудник ОКК' %}
+    <div class="card">
+        <h3>Результаты контроля</h3>
+        <form method="post" action="{% url 'quality:qc_submit_results' task.id %}" enctype="multipart/form-data">
+            {% csrf_token %}
+            
+            <div class="form-group">
+                <label for="visual_control">Визуальный контроль</label>
+                <textarea id="visual_control" name="visual_control" rows="4"
+                          placeholder="Введите результаты визуального контроля"></textarea>
+                <div class="error-message" id="visual-error"></div>
+            </div>
+
+            <div class="form-group">
+                <label for="lab_results">Лабораторные испытания</label>
+                <textarea id="lab_results" name="lab_results" rows="4"
+                          placeholder="Введите результаты лабораторных испытаний"></textarea>
+                <div class="error-message" id="lab-error"></div>
+            </div>
+
+            <div class="form-group">
+                <label for="qc_files">Прикрепить файлы (сканы протоколов)</label>
+                <input type="file" id="qc_files" name="qc_files" multiple>
+            </div>
+
+            <button type="submit" class="btn btn-success">Отправить результаты</button>
+        </form>
+    </div>
+    {% endif %}
+
+    {% if task.qcresult %}
+    <div class="card">
+        <h3>Отправленные результаты</h3>
+        <table>
+            <tr>
+                <th>Визуальный контроль</th>
+                <td>{{ task.qcresult.visual_control }}</td>
+            </tr>
+            <tr>
+                <th>Лабораторные испытания</th>
+                <td>{{ task.qcresult.lab_results }}</td>
+            </tr>
+            <tr>
+                <th>Отправил</th>
+                <td>{{ task.qcresult.submitted_by.get_full_name }}</td>
+            </tr>
+            <tr>
+                <th>Дата отправки</th>
+                <td>{{ task.qcresult.submitted_at|date:"d.m.Y H:i" }}</td>
+            </tr>
+        </table>
+    </div>
+    {% endif %}
+
+    <div style="margin-top: 20px;">
+        <a href="{% url 'quality:qc_tasks' %}" class="btn">Назад к списку</a>
+    </div>
+</div>
+
+<script>
+const extendedCharsRegex = /^[a-zA-Zа-яА-Я0-9\s\-._,;:!?()]+$/;
+
+function validateTextField(fieldId, errorId) {
+    const input = document.getElementById(fieldId);
+    const error = document.getElementById(errorId);
+    const value = input.value;
+    
+    if (value && !extendedCharsRegex.test(value)) {
+        input.classList.add('error');
+        error.textContent = 'Используются неразрешённые символы';
+        return false;
+    }
+    input.classList.remove('error');
+    error.textContent = '';
+    return true;
+}
+
+document.getElementById('visual_control').addEventListener('blur', function() {
+    validateTextField('visual_control', 'visual-error');
+});
+
+document.getElementById('lab_results').addEventListener('blur', function() {
+    validateTextField('lab_results', 'lab-error');
+});
+</script>
+{% endblock %}

@@ -1,9 +1,14 @@
-from django.shortcuts import render, redirect
+from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
+from django.http import JsonResponse
 from .models import User
-from audit.models import Action, AuditLog, Document
-from mbr.models import DocumentType
+from audit.models import Action, AuditLog
+from mbr.models import DocumentType, Document
 import re
+import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def login_view(request):
@@ -108,18 +113,6 @@ def logout_view(request):
     return redirect('users:login')
 
 
-# def dashboard(request):
-#     if 'user_id' not in request.session:
-#         return redirect('login')
-#
-#     user = User.objects.get(user_id=request.session['user_id'])
-#
-#     context = {
-#         'user': user,
-#     }
-#     return render(request, 'users/dashboard.html', context)
-
-
 def admin_dashboard(request):
     if 'user_id' not in request.session or request.session.get('user_role') != 'системный администратор':
         return redirect('login')
@@ -213,10 +206,22 @@ def technologist_dashboard(request):
 
     from mbr.models import MBR, Product
     from ebr.models import EBR
+    from django.db.models import Max
 
     user = User.objects.get(user_id=request.session['user_id'])
 
-    approved_mbrs = MBR.objects.filter(status__status_name='Утверждён')
+    # Только последняя утверждённая версия каждого продукта
+    # Находим max document_id для каждого product_id среди утверждённых
+    latest_mbr_ids = MBR.objects.filter(
+        status__status_name='Утверждён'
+    ).values('product_id').annotate(
+        max_doc_id=Max('document_id')
+    ).values_list('max_doc_id', flat=True)
+    
+    approved_mbrs = MBR.objects.filter(
+        document_id__in=latest_mbr_ids
+    ).select_related('product', 'status', 'signed_by')
+    
     products = Product.objects.all()
     ebrs = EBR.objects.all().select_related('status', 'mbr__product').order_by('-start_date')[:10]
 
@@ -229,6 +234,26 @@ def technologist_dashboard(request):
     return render(request, 'users/technologist_dashboard.html', context)
 
 
+def is_ajax(request):
+    """Проверка на AJAX-запрос"""
+    return request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+
+
+def ajax_redirect(request, viewname, *args, **kwargs):
+    """Если AJAX — возвращаем JSON, иначе redirect"""
+    if is_ajax(request):
+        return JsonResponse({'success': True, 'redirect': str(viewname)})
+    return redirect(viewname, *args, **kwargs)
+
+
+def ajax_redirect_with_error(request, error_msg):
+    """Ошибка для AJAX или redirect с сообщением"""
+    if is_ajax(request):
+        return JsonResponse({'success': False, 'error': error_msg}, status=400)
+    messages.error(request, error_msg)
+    return redirect('users:chief_technologist_dashboard')
+
+
 def chief_technologist_dashboard(request):
     if 'user_id' not in request.session or request.session.get('user_role') != 'главный технолог':
         return redirect('users:login')
@@ -236,132 +261,223 @@ def chief_technologist_dashboard(request):
     from mbr.models import MBR, Parameter, RawMaterial, Product, Document, DocumentType, MBRStatus
     from audit.models import Action, AuditLog
     from datetime import datetime
+    import logging
+    import traceback
 
+    logger = logging.getLogger(__name__)
     user = User.objects.get(user_id=request.session['user_id'])
 
-    # Обработка POST запросов
     if request.method == 'POST':
-        action = request.POST.get('action')
-        print(f"POST received: {request.POST}")  # Отладка
+        action = request.POST.get('form_action')
+        logger.info(f"=== POST received, action: {action} ===")
 
         if action == 'create_mbr':
             try:
-                # Получаем или создаём продукт
-                product_code = request.POST.get('product_code')
-                product_name = request.POST.get('product_name')
+                # 1. Получаем ID продукта (используем id)
+                product_id = request.POST.get('product_id')
+                logger.info(f"Product ID: {product_id}")
 
-                print(f"Creating MBR for product: {product_code} - {product_name}")
+                if not product_id:
+                    return ajax_redirect_with_error(request, 'Не выбран продукт')
 
-                product, created = Product.objects.get_or_create(
-                    product_code=product_code,
-                    defaults={'product_name': product_name}
-                )
+                try:
+                    product = Product.objects.get(id=product_id)
+                    logger.info(f"Found product: {product.product_code}")
+                except Product.DoesNotExist:
+                    return ajax_redirect_with_error(request, 'Выбранный продукт не существует')
 
-                if created:
-                    print(f"Created new product: {product_code}")
+                # 2. Создаём документ
+                try:
+                    doc_type = DocumentType.objects.get(type_name='MBR')
+                except DocumentType.DoesNotExist:
+                    return ajax_redirect_with_error(request, 'Ошибка конфигурации: тип документа MBR не найден')
 
-                # Создаём документ
-                doc_type = DocumentType.objects.get(type_name='MBR')
                 document = Document.objects.create(type=doc_type)
-                print(f"Created document: {document.document_id}")
+                logger.info(f"Created document with ID: {document.id}")  # исправлено: id вместо document_id
 
-                # Получаем статус "Черновик"
-                draft_status = MBRStatus.objects.get(status_name='Черновик')
+                # 3. Получаем статус
+                try:
+                    draft_status = MBRStatus.objects.get(status_name='Черновик')
+                except MBRStatus.DoesNotExist:
+                    return ajax_redirect_with_error(request, 'Ошибка конфигурации: статус "Черновик" не найден')
 
-                # Создаём MBR
+                # 4. Определяем версию (автоинкремент если уже есть MBR для этого продукта)
+                existing_mbrs = MBR.objects.filter(product=product).order_by('-document_id')
+                if existing_mbrs.exists():
+                    max_version = 0
+                    for existing_mbr in existing_mbrs:
+                        import re as re_mod
+                        match = re_mod.search(r'v(\d+)', existing_mbr.version)
+                        if match:
+                            version_num = int(match.group(1))
+                            if version_num > max_version:
+                                max_version = version_num
+                    version = f'v{max_version + 1}'
+                    logger.info(f"Auto-generated version: {version}")
+                else:
+                    version = request.POST.get('version', 'v1')
+
+                operations = request.POST.get('operations', '')
+                comments = request.POST.get('comments', '')
+
                 mbr = MBR.objects.create(
                     document=document,
                     product=product,
-                    version=request.POST.get('version', 'v1'),
+                    version=version,
                     status=draft_status,
-                    operations=request.POST.get('operations', ''),
-                    comments=request.POST.get('comments', '')
+                    operations=operations,
+                    comments=comments
                 )
-                print(f"Created MBR: {mbr.document_id}")
+                logger.info(f"Created MBR with document_id: {mbr.document_id}, version: {version}")
 
-                # Добавляем сырьё
+                # 5. Добавляем сырьё
                 raw_material_ids = request.POST.getlist('raw_materials')
-                print(f"Raw materials: {raw_material_ids}")
+                logger.info(f"Raw materials to add: {raw_material_ids}")
 
                 for rm_id in raw_material_ids:
                     if rm_id and rm_id.isdigit():
                         try:
-                            material = RawMaterial.objects.get(pk=int(rm_id))
+                            material = RawMaterial.objects.get(id=int(rm_id))
                             mbr.raw_materials.add(material)
-                            print(f"Added raw material: {material.material_name}")
+                            logger.info(f"Added raw material: {material.material_name}")
                         except RawMaterial.DoesNotExist:
-                            print(f"Raw material {rm_id} not found")
+                            logger.warning(f"Raw material {rm_id} not found")
 
-                # Добавляем параметры
+                # 6. Создаём MBRParameter с собственными значениями (НЕ меняем глобальные Parameter!)
+                from mbr.models import MBRParameter
+                logger.info("=== Creating MBRParameter instances ===")
+
                 for key, value in request.POST.items():
                     if key.startswith('param_value_'):
                         param_id = key.replace('param_value_', '')
-                        print(f"Processing parameter {param_id}")
+
+                        if not param_id or not param_id.isdigit():
+                            logger.warning(f"Invalid param_id: '{param_id}'")
+                            continue
 
                         try:
-                            parameter = Parameter.objects.get(pk=param_id)
-                            mbr.parameters.add(parameter)
+                            parameter = Parameter.objects.get(id=int(param_id))
+                            logger.info(f"Found parameter template: {parameter.parameter_name}")
 
-                            # Обновляем значения параметров
-                            param_value = request.POST.get(f'param_value_{param_id}')
-                            param_tolerance = request.POST.get(f'param_tolerance_{param_id}')
-                            param_critical = request.POST.get(f'param_critical_{param_id}')
+                            # Получаем значения из формы
+                            param_value_str = request.POST.get(f'param_value_{param_id}', '0')
+                            param_tolerance_str = request.POST.get(f'param_tolerance_{param_id}', '0')
+                            param_critical_str = request.POST.get(f'param_critical_{param_id}', '0')
 
-                            print(f"Parameter values - value: {param_value}, tolerance: {param_tolerance}, critical: {param_critical}")
+                            # Конвертируем в float
+                            try:
+                                param_value = float(param_value_str.replace(',', '.'))
+                            except (ValueError, AttributeError):
+                                param_value = 0
 
-                            if param_value:
-                                parameter.value = float(param_value)
-                            if param_tolerance:
-                                parameter.tolerance = float(param_tolerance)
-                            if param_critical:
-                                parameter.critical_deviation = float(param_critical)
-                            parameter.save()
+                            try:
+                                param_tolerance = float(param_tolerance_str.replace(',', '.'))
+                            except (ValueError, AttributeError):
+                                param_tolerance = 0
+
+                            try:
+                                param_critical = float(param_critical_str.replace(',', '.'))
+                            except (ValueError, AttributeError):
+                                param_critical = 0
+
+                            # Создаём MBRParameter с СОБСТВЕННЫМИ значениями для ЭТОГО MBR
+                            mbr_param = MBRParameter.objects.create(
+                                mbr=mbr,
+                                parameter=parameter,
+                                value=param_value,
+                                tolerance=param_tolerance,
+                                critical_deviation=param_critical
+                            )
+                            logger.info(f"Created MBRParameter: {parameter.parameter_name} = {param_value}")
 
                         except Parameter.DoesNotExist:
-                            print(f"Parameter {param_id} not found")
-                        except ValueError as e:
-                            print(f"Invalid number format: {e}")
+                            logger.warning(f"Parameter {param_id} not found")
+                        except Exception as e:
+                            logger.error(f"Error creating MBRParameter {param_id}: {str(e)}")
+                            import traceback
+                            logger.error(traceback.format_exc())
 
-                # Проверяем, была ли нажата кнопка утверждения
+                # Проверяем, сколько параметров создалось
+                params_count = MBRParameter.objects.filter(mbr=mbr).count()
+                logger.info(f"=== Total MBRParameter created: {params_count} ===")
+
+                # 7. Проверяем утверждение
                 if request.POST.get('approve'):
-                    approved_status = MBRStatus.objects.get(status_name='Утверждён')
-                    mbr.status = approved_status
-                    mbr.approval_date = datetime.now().date()
-                    mbr.signed_by = user
-                    mbr.save()
-
-                    messages.success(request, f'MBR {product_code} утверждён')
+                    # ВАЛИДАЦИЯ перед утверждением
+                    validation_errors = []
+                    
+                    if not mbr.operations or not mbr.operations.strip():
+                        validation_errors.append('Не заполнены технологические операции')
+                    
+                    params_count = MBRParameter.objects.filter(mbr=mbr).count()
+                    if params_count == 0:
+                        validation_errors.append('Не добавлены параметры')
+                    else:
+                        empty_params = MBRParameter.objects.filter(mbr=mbr, value=0)
+                        if empty_params.exists():
+                            param_names = ', '.join([p.parameter.parameter_name for p in empty_params[:3]])
+                            validation_errors.append(f'Не заполнены параметры: {param_names}')
+                    
+                    if mbr.raw_materials.count() == 0:
+                        validation_errors.append('Не добавлено сырьё')
+                    
+                    if validation_errors:
+                        error_msg = 'Внесённая информация не является полной: ' + '; '.join(validation_errors)
+                        if is_ajax(request):
+                            return JsonResponse({'success': False, 'error': error_msg}, status=400)
+                        messages.error(request, error_msg)
+                        return redirect('users:chief_technologist_dashboard')
+                    
+                    # Всё заполнено — утверждаем
+                    try:
+                        approved_status = MBRStatus.objects.get(status_name='Утверждён')
+                        mbr.status = approved_status
+                        mbr.approval_date = datetime.now().date()
+                        mbr.signed_by = user
+                        mbr.save()
+                        messages.success(request, f'MBR для {product.product_code} утверждён')
+                    except MBRStatus.DoesNotExist:
+                        messages.warning(request, 'MBR сохранён как черновик')
                 else:
-                    messages.success(request, f'MBR {product_code} сохранён как черновик')
+                    messages.success(request, f'MBR для {product.product_code} сохранён как черновик')
 
-                # Логируем действие
+                # 8. Логируем
                 try:
                     action_obj = Action.objects.get(action_name='Создание MBR')
                     AuditLog.objects.create(
                         user=user,
                         action=action_obj,
                         document=document,
-                        comment=f"Создан MBR для {product_code}"
+                        comment=f"Создан MBR для {product.product_code}"
                     )
                 except Exception as e:
-                    print(f"Logging error: {e}")
+                    logger.error(f"Logging error: {e}")
 
-                # Перенаправляем на ту же страницу, чтобы избежать повторной отправки формы
+                # Если AJAX-запрос — возвращаем JSON, иначе редирект
+                if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return JsonResponse({
+                        'success': True,
+                        'message': f'MBR для {product.product_code} сохранён',
+                        'mbr_id': mbr.document_id
+                    })
                 return redirect('users:chief_technologist_dashboard')
 
             except Exception as e:
-                print(f"Error creating MBR: {str(e)}")
-                import traceback
-                traceback.print_exc()
+                logger.error(f"Error creating MBR: {str(e)}")
+                logger.error(traceback.format_exc())
+                
+                # Если AJAX-запрос — возвращаем JSON ошибки
+                if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return JsonResponse({'success': False, 'error': str(e)}, status=500)
+                
                 messages.error(request, f'Ошибка при создании MBR: {str(e)}')
+                return redirect('users:chief_technologist_dashboard')
 
     # Получаем данные для отображения
     mbrs = MBR.objects.all().select_related('product', 'status', 'signed_by').order_by('-created_at')
     parameters = Parameter.objects.all().order_by('parameter_name')
     raw_materials = RawMaterial.objects.all().order_by('material_name')
     products = Product.objects.all().order_by('product_code')
-
-    print(f"Loaded {parameters.count()} parameters")  # Отладка
 
     context = {
         'user': user,
@@ -446,8 +562,8 @@ def director_dashboard(request):
     return render(request, 'users/director_dashboard.html', context)
 
 
-from django.http import JsonResponse
-from mbr.models import MBR, Parameter
+
+from mbr.models import MBR, Parameter, RawMaterial, MBRParameter
 
 
 def get_mbr_parameters(request, mbr_id):
@@ -456,7 +572,10 @@ def get_mbr_parameters(request, mbr_id):
         return JsonResponse({'error': 'Not authenticated'}, status=401)
 
     try:
-        mbr = MBR.objects.get(document_id=mbr_id)
+        mbr = MBR.objects.select_related('product', 'status', 'document').get(document_id=mbr_id)
+        # Получаем параметры из MBRParameter (собственные значения этого MBR)
+        mbr_params = MBRParameter.objects.filter(mbr=mbr).select_related('parameter')
+        
         data = {
             'id': mbr.document_id,
             'product_code': mbr.product.product_code,
@@ -467,17 +586,17 @@ def get_mbr_parameters(request, mbr_id):
             'comments': mbr.comments,
             'parameters': [
                 {
-                    'id': p.parameter_id,
-                    'name': p.parameter_name,
-                    'value': float(p.value),
-                    'unit': p.unit,
-                    'tolerance': float(p.tolerance),
-                    'critical': float(p.critical_deviation)
-                } for p in mbr.parameters.all()
+                    'id': mp.parameter.id,
+                    'name': mp.parameter.parameter_name,
+                    'value': float(mp.value),
+                    'unit': mp.parameter.unit,
+                    'tolerance': float(mp.tolerance),
+                    'critical': float(mp.critical_deviation)
+                } for mp in mbr_params
             ],
             'raw_materials': [
                 {
-                    'id': rm.raw_material_id,
+                    'id': rm.id,
                     'name': rm.material_name
                 } for rm in mbr.raw_materials.all()
             ]
@@ -485,3 +604,305 @@ def get_mbr_parameters(request, mbr_id):
         return JsonResponse(data)
     except MBR.DoesNotExist:
         return JsonResponse({'error': 'MBR not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def get_mbr_for_edit(request, mbr_id):
+    """API для получения данных MBR для редактирования"""
+    if 'user_id' not in request.session:
+        return JsonResponse({'error': 'Not authenticated'}, status=401)
+
+    try:
+        mbr = MBR.objects.get(document_id=mbr_id)
+
+        # Проверяем, что MBR в статусе черновика
+        if mbr.status.status_name != 'Черновик':
+            return JsonResponse({'error': 'Can only edit draft MBR'}, status=400)
+
+        # Получаем параметры из MBRParameter
+        mbr_params = MBRParameter.objects.filter(mbr=mbr).select_related('parameter')
+
+        data = {
+            'id': mbr.document_id,
+            'product_id': mbr.product.id,
+            'product_code': mbr.product.product_code,
+            'product_name': mbr.product.product_name,
+            'version': mbr.version,
+            'operations': mbr.operations,
+            'comments': mbr.comments,
+            'parameters': [
+                {
+                    'id': mp.parameter.id,
+                    'name': mp.parameter.parameter_name,
+                    'value': float(mp.value),
+                    'unit': mp.parameter.unit,
+                    'tolerance': float(mp.tolerance),
+                    'critical': float(mp.critical_deviation)
+                } for mp in mbr_params
+            ],
+            'raw_materials': [
+                {
+                    'id': rm.id,
+                    'name': rm.material_name
+                } for rm in mbr.raw_materials.all()
+            ]
+        }
+        return JsonResponse(data)
+    except MBR.DoesNotExist:
+        return JsonResponse({'error': 'MBR not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def update_mbr(request, mbr_id):
+    """Обновление существующего MBR"""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'главный технолог':
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
+
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        mbr = MBR.objects.get(document_id=mbr_id)
+
+        # Проверяем статус
+        if mbr.status.status_name != 'Черновик':
+            return JsonResponse({'error': 'Can only edit draft MBR'}, status=400)
+
+        # Обновляем поля
+        operations = request.POST.get('operations')
+        comments = request.POST.get('comments')
+
+        if operations:
+            mbr.operations = operations
+        if comments is not None:  # может быть пустым
+            mbr.comments = comments
+
+        mbr.save()
+
+        # Обновляем сырьё (сначала очищаем, потом добавляем новые)
+        mbr.raw_materials.clear()
+        raw_material_ids = request.POST.getlist('raw_materials')
+        for rm_id in raw_material_ids:
+            if rm_id and rm_id.isdigit():
+                try:
+                    material = RawMaterial.objects.get(id=int(rm_id))
+                    mbr.raw_materials.add(material)
+                except RawMaterial.DoesNotExist:
+                    pass
+
+        # Обновляем параметры (создаём новые MBRParameter вместо изменения глобальных Parameter)
+        # Сначала удаляем старые
+        MBRParameter.objects.filter(mbr=mbr).delete()
+
+        for key, value in request.POST.items():
+            if key.startswith('param_value_'):
+                param_id = key.replace('param_value_', '')
+                if not param_id or not param_id.isdigit():
+                    continue
+
+                try:
+                    parameter = Parameter.objects.get(id=int(param_id))
+
+                    param_value_str = request.POST.get(f'param_value_{param_id}', '0')
+                    param_tolerance_str = request.POST.get(f'param_tolerance_{param_id}', '0')
+                    param_critical_str = request.POST.get(f'param_critical_{param_id}', '0')
+
+                    try:
+                        param_value = float(param_value_str.replace(',', '.'))
+                    except (ValueError, AttributeError):
+                        param_value = 0
+
+                    try:
+                        param_tolerance = float(param_tolerance_str.replace(',', '.'))
+                    except (ValueError, AttributeError):
+                        param_tolerance = 0
+
+                    try:
+                        param_critical = float(param_critical_str.replace(',', '.'))
+                    except (ValueError, AttributeError):
+                        param_critical = 0
+
+                    # Создаём MBRParameter с СОБСТВЕННЫМИ значениями для ЭТОГО MBR
+                    MBRParameter.objects.create(
+                        mbr=mbr,
+                        parameter=parameter,
+                        value=param_value,
+                        tolerance=param_tolerance,
+                        critical_deviation=param_critical
+                    )
+                except Parameter.DoesNotExist:
+                    pass
+
+        # Логируем действие
+        try:
+            from audit.models import Action, AuditLog
+            action_obj = Action.objects.get(action_name='Редактирование MBR')
+            AuditLog.objects.create(
+                user=User.objects.get(user_id=request.session['user_id']),
+                action=action_obj,
+                document=mbr.document,
+                comment=f"Отредактирован MBR для {mbr.product.product_code}"
+            )
+        except:
+            pass
+
+        return JsonResponse({'success': True, 'message': 'MBR updated successfully'})
+
+    except MBR.DoesNotExist:
+        return JsonResponse({'error': 'MBR not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def deactivate_user(request, user_id):
+    """Деактивация пользователя (только для системного администратора)"""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'системный администратор':
+        messages.error(request, 'У вас нет доступа к этой функции')
+        return redirect('users:admin_dashboard')
+
+    if request.method == 'POST':
+        user_to_deactivate = get_object_or_404(User, user_id=user_id)
+        
+        # Нельзя деактивировать самого себя
+        if user_to_deactivate.user_id == request.session['user_id']:
+            messages.error(request, 'Нельзя деактивировать свою учетную запись')
+            return redirect('users:admin_dashboard')
+        
+        user_to_deactivate.is_active = False
+        user_to_deactivate.save()
+
+        # Логируем
+        try:
+            action = Action.objects.get(action_name='Деактивация пользователя')
+            AuditLog.objects.create(
+                user=User.objects.get(user_id=request.session['user_id']),
+                action=action,
+                comment=f"Деактивирован пользователь {user_to_deactivate.login}"
+            )
+        except:
+            pass
+
+        messages.success(request, f'Пользователь {user_to_deactivate.login} деактивирован')
+    
+    return redirect('users:admin_dashboard')
+
+
+def batch_number_rules(request):
+    """Настройка правил генерации номеров партий (только для системного администратора)"""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'системный администратор':
+        messages.error(request, 'У вас нет доступа к этой функции')
+        return redirect('users:admin_dashboard')
+
+    user = User.objects.get(user_id=request.session['user_id'])
+
+    if request.method == 'POST':
+        rule = request.POST.get('batch_rule')
+        
+        # Сохраняем правило в сессии (в реальном проекте - в БД)
+        request.session['batch_number_rule'] = rule
+        
+        messages.success(request, f'Правило генерации номеров партий обновлено: {rule}')
+        
+        # Логируем
+        try:
+            action = Action.objects.get(action_name='Изменение правил генерации номеров партий')
+            AuditLog.objects.create(
+                user=user,
+                action=action,
+                comment=f"Установлено правило: {rule}"
+            )
+        except:
+            pass
+        
+        return redirect('users:admin_dashboard')
+
+    # Получаем текущее правило
+    current_rule = request.session.get('batch_number_rule', 'B-<Код продукта>-<Год>-<Номер партии>')
+
+    context = {
+        'user': user,
+        'current_rule': current_rule,
+    }
+    return render(request, 'users/batch_rules.html', context)
+
+
+def approve_mbr_api(request, mbr_id):
+    """API для утверждения MBR (вызывается из chief_technologist_dashboard)"""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'главный технолог':
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
+
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        from mbr.models import MBR, MBRStatus, MBRParameter
+
+        mbr = MBR.objects.select_related('status', 'document', 'product').get(document_id=mbr_id)
+
+        # Проверяем, что MBR в статусе черновика
+        if mbr.status.status_name != 'Черновик':
+            return JsonResponse({'error': 'MBR уже утверждён'}, status=400)
+
+        # === ВАЛИДАЦИЯ: проверяем что всё заполнено ===
+        errors = []
+
+        # Проверяем продукт
+        if not mbr.product:
+            errors.append('Не выбран продукт')
+
+        # Проверяем операции
+        if not mbr.operations or not mbr.operations.strip():
+            errors.append('Не заполнены технологические операции')
+
+        # Проверяем параметры
+        param_count = MBRParameter.objects.filter(mbr=mbr).count()
+        if param_count == 0:
+            errors.append('Не добавлены параметры')
+        else:
+            # Проверяем что у всех параметров есть значения
+            empty_params = MBRParameter.objects.filter(mbr=mbr, value=0)
+            if empty_params.exists():
+                param_names = ', '.join([p.parameter.parameter_name for p in empty_params[:3]])
+                errors.append(f'Не заполнены значения параметров: {param_names}')
+
+        # Проверяем сырьё
+        if mbr.raw_materials.count() == 0:
+            errors.append('Не добавлено сырьё')
+
+        if errors:
+            return JsonResponse({
+                'success': False,
+                'error': 'Внесённая информация не является полной: ' + '; '.join(errors)
+            }, status=400)
+
+        # === ВСЁ ЗАПОЛНЕНО — утверждаем ===
+        approved_status = MBRStatus.objects.get(status_name='Утверждён')
+
+        # Обновляем MBR
+        mbr.status_id = approved_status.id
+        mbr.approval_date = datetime.date.today()
+        mbr.signed_by_id = request.session['user_id']
+        mbr.save(update_fields=['status_id', 'approval_date', 'signed_by_id'])
+
+        # Логируем
+        try:
+            action = Action.objects.get(action_name='Утверждение MBR')
+            AuditLog.objects.create(
+                user_id=request.session['user_id'],
+                action=action,
+                document=mbr.document,
+                comment=f"Утверждён MBR {mbr.product.product_code} v{mbr.version}"
+            )
+        except Exception as e:
+            logger.error(f"Logging error: {e}")
+
+        return JsonResponse({'success': True, 'message': 'MBR утверждён'})
+
+    except MBR.DoesNotExist:
+        return JsonResponse({'error': 'MBR not found'}, status=404)
+    except MBRStatus.DoesNotExist:
+        return JsonResponse({'error': 'Approved status not found'}, status=500)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)

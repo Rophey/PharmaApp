@@ -127,13 +127,41 @@ function searchProducts() {
 }
 
 function startBatch(mbrId) {
+    if (!mbrId || mbrId === 'None' || mbrId === 'undefined') {
+        alert('Ошибка: MBR не имеет идентификатора');
+        return;
+    }
+    
     if (confirm('Запустить производство партии?')) {
-        fetch(`/api/ebr/create/${mbrId}/`, { method: 'POST' })
-            .then(response => response.json())
-            .then(data => {
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        fetch(`/ebr/api/create/${mbrId}/`, {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRFToken': csrfToken
+            }
+        })
+        .then(response => {
+            if (response.status === 302) {
+                // Редирект — перезагружаем страницу
+                location.reload();
+                return;
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data && data.success) {
                 alert(`Партия ${data.batch_number} создана`);
-                document.querySelector('[data-tab="batch-monitor"]').click();
-            });
+                location.reload();
+            } else if (data && data.error) {
+                alert('Ошибка: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Start batch error:', error);
+            // При редиректе это нормально
+            location.reload();
+        });
     }
 }
 

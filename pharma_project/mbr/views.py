@@ -78,21 +78,27 @@ def mbr_approve(request, pk):
         from audit.models import Action, AuditLog
         import datetime
 
-        mbr.status_id = 2  # Утверждён
-        mbr.approval_date = datetime.date.today()
-        mbr.signed_by = request.current_user
-        mbr.save()
+        # Получаем статус "Утверждён" динамически
+        try:
+            approved_status = MBRStatus.objects.get(status_name='Утверждён')
+            mbr.status = approved_status
+            mbr.approval_date = datetime.date.today()
+            mbr.signed_by = request.current_user
+            mbr.save()
 
-        # Логируем
-        action = Action.objects.get(action_name='Утверждение MBR')
-        AuditLog.objects.create(
-            user=request.current_user,
-            action=action,
-            document=mbr.document,
-            comment=f"Утверждён MBR {mbr.product.product_code} v{mbr.version}"
-        )
+            # Логируем
+            action = Action.objects.get(action_name='Утверждение MBR')
+            AuditLog.objects.create(
+                user=request.current_user,
+                action=action,
+                document=mbr.document,
+                comment=f"Утверждён MBR {mbr.product.product_code} v{mbr.version}"
+            )
 
-        messages.success(request, 'MBR утверждён')
+            messages.success(request, 'MBR утверждён')
+        except MBRStatus.DoesNotExist:
+            messages.error(request, 'Ошибка: статус "Утверждён" не найден в базе данных')
+        
     return redirect('mbr:mbr_detail', pk=pk)
 
 
@@ -110,7 +116,7 @@ def mbr_new_version(request, pk):
     import re
     version_num = int(re.search(r'v(\d+)', old_mbr.version).group(1)) + 1
 
-    from .models import MBRStatus
+    from .models import MBRStatus, MBRParameter
     draft_status = MBRStatus.objects.get(status_name='Черновик')
 
     new_mbr = MBR.objects.create(
@@ -125,8 +131,56 @@ def mbr_new_version(request, pk):
     # Копируем связи
     for rm in old_mbr.raw_materials.all():
         new_mbr.raw_materials.add(rm)
-    for param in old_mbr.parameters.all():
-        new_mbr.parameters.add(param)
+    
+    # Копируем параметры (вместе со значениями из MBRParameter)
+    old_params = MBRParameter.objects.filter(mbr=old_mbr)
+    for old_param in old_params:
+        MBRParameter.objects.create(
+            mbr=new_mbr,
+            parameter=old_param.parameter,
+            value=old_param.value,
+            tolerance=old_param.tolerance,
+            critical_deviation=old_param.critical_deviation
+        )
 
     messages.success(request, f'Создана новая версия {new_mbr.version}')
+    
+    # Если AJAX — возвращаем JSON
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        from django.http import JsonResponse
+        return JsonResponse({
+            'success': True,
+            'message': f'Создана версия {new_mbr.version}',
+            'new_mbr_id': new_mbr.document_id
+        })
+    
     return redirect('mbr:mbr_edit', pk=new_mbr.document_id)
+
+
+def mbr_delete(request, pk):
+    """Удаление MBR (только черновики)"""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'главный технолог':
+        return redirect('login')
+
+    mbr = get_object_or_404(MBR, document_id=pk)
+    
+    # Можно удалять только черновики
+    if mbr.status.status_name != 'Черновик':
+        messages.error(request, 'Можно удалять только черновики')
+        return redirect('mbr:mbr_list')
+    
+    if request.method == 'POST':
+        product_name = mbr.product.product_code
+        # Удаляем параметры
+        from .models import MBRParameter
+        MBRParameter.objects.filter(mbr=mbr).delete()
+        # Удаляем MBR
+        mbr.delete()
+        messages.success(request, f'Черновик MBR {product_name} удалён')
+        
+        # Если AJAX
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            from django.http import JsonResponse
+            return JsonResponse({'success': True, 'message': 'MBR удалён'})
+    
+    return redirect('mbr:mbr_list')

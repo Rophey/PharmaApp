@@ -1,0 +1,236 @@
+{% extends 'base.html' %}
+
+{% block title %}EBR: {{ ebr.batch_number }}{% endblock %}
+
+{% block content %}
+<div class="interface-section">
+    <h2>Электронный паспорт партии: {{ ebr.batch_number }}</h2>
+    
+    <div class="card">
+        <h3>Основная информация</h3>
+        <table>
+            <tr>
+                <th style="width: 250px;">Номер партии</th>
+                <td>{{ ebr.batch_number }}</td>
+            </tr>
+            <tr>
+                <th>Продукт</th>
+                <td>{{ ebr.mbr.product.product_name }} ({{ ebr.mbr.product.product_code }})</td>
+            </tr>
+            <tr>
+                <th>Версия MBR</th>
+                <td>{{ ebr.mbr.version }}</td>
+            </tr>
+            <tr>
+                <th>Статус</th>
+                <td>
+                    {% if ebr.status.status_name == 'В работе' %}
+                        <span class="status-badge status-active">{{ ebr.status.status_name }}</span>
+                    {% elif ebr.status.status_name == 'Завершена' %}
+                        <span class="status-badge status-approved">{{ ebr.status.status_name }}</span>
+                    {% elif ebr.status.status_name == 'Заблокирована' %}
+                        <span class="status-badge status-blocked">{{ ebr.status.status_name }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+            <tr>
+                <th>Дата начала</th>
+                <td>{{ ebr.start_date|date:"d.m.Y H:i" }}</td>
+            </tr>
+            <tr>
+                <th>Дата завершения</th>
+                <td>{{ ebr.completion_date|date:"d.m.Y H:i"|default:"—" }}</td>
+            </tr>
+            <tr>
+                <th>Оператор</th>
+                <td>{{ ebr.operator.get_full_name|default:"—" }}</td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- Операции -->
+    <div class="card">
+        <h3>Технологические операции</h3>
+        <table id="operations-table">
+            <thead>
+                <tr>
+                    <th>Операция</th>
+                    <th>Статус</th>
+                    <th>Начало</th>
+                    <th>Завершение</th>
+                    <th>Комментарий</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for op in operations %}
+                <tr>
+                    <td>{{ op.operation_name }}</td>
+                    <td>
+                        {% if op.status == 'completed' %}
+                            <span class="indicator indicator-green"></span> Завершена
+                        {% elif op.status == 'in_progress' %}
+                            <span class="indicator indicator-yellow"></span> В работе
+                        {% elif op.status == 'blocked' %}
+                            <span class="indicator indicator-red"></span> Заблокирована
+                        {% else %}
+                            <span class="indicator"></span> Ожидает
+                        {% endif %}
+                    </td>
+                    <td>{{ op.started_at|date:"d.m.Y H:i"|default:"—" }}</td>
+                    <td>{{ op.completed_at|date:"d.m.Y H:i"|default:"—" }}</td>
+                    <td>{{ op.operator_comment|default:"—" }}</td>
+                    <td>
+                        {% if op.status == 'in_progress' and user.user_role == 'оператор' %}
+                            <form method="post" action="{% url 'ebr:complete_operation' op.id %}" style="display: inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-success" style="padding: 5px 10px;">Подтвердить выполнение</button>
+                            </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6">Нет операций</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        
+        {% if user.user_role == 'технолог' and not operations %}
+        <form method="post" action="{% url 'ebr:ebr_start' ebr.document_id %}" style="margin-top: 15px;">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-success">Начать производство</button>
+        </form>
+        {% endif %}
+    </div>
+
+    <!-- Параметры -->
+    <div class="card">
+        <h3>Параметры процесса</h3>
+        <form method="post" action="{% url 'ebr:ebr_add_data' ebr.document_id %}">
+            {% csrf_token %}
+            <table id="parameters-table">
+                <thead>
+                    <tr>
+                        <th>Параметр</th>
+                        <th>Целевое значение</th>
+                        <th>Допуск (%)</th>
+                        <th>Критическое (%)</th>
+                        <th>Фактическое значение</th>
+                        <th>Статус</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for param in parameters %}
+                    <tr>
+                        <td>{{ param.parameter.parameter_name }} ({{ param.parameter.unit }})</td>
+                        <td>{{ param.parameter.value }}</td>
+                        <td>{{ param.parameter.tolerance }}%</td>
+                        <td>{{ param.parameter.critical_deviation }}%</td>
+                        <td>
+                            <input type="text" name="param_{{ param.parameter_id }}" 
+                                   value="{{ param.actual_value|default:'' }}"
+                                   class="param-input" data-target="{{ param.parameter.value }}"
+                                   data-tolerance="{{ param.parameter.tolerance }}"
+                                   data-critical="{{ param.parameter.critical_deviation }}">
+                        </td>
+                        <td>
+                            <span class="param-status" data-param="{{ param.parameter_id }}">
+                                {% if param.actual_value %}
+                                    <span class="indicator indicator-green"></span> В норме
+                                {% endif %}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <button type="submit" class="btn btn-primary">Сохранить параметры</button>
+        </form>
+    </div>
+
+    <!-- Визуальный контроль и комментарии -->
+    <div class="card">
+        <h3>Визуальный контроль и лабораторные испытания</h3>
+        <form method="post">
+            {% csrf_token %}
+            <textarea name="inspection_notes" rows="4" 
+                      placeholder="Введите результаты визуального контроля и лабораторных испытаний">{{ ebr.inspection_notes|default:'' }}</textarea>
+            <div class="error-message" id="inspection-error"></div>
+            
+            <div class="form-group" style="margin-top: 15px;">
+                <label for="comments">Комментарий</label>
+                <textarea id="comments" name="comments" rows="3"
+                          placeholder="Введите комментарий">{{ ebr.comments|default:'' }}</textarea>
+                <div class="error-message" id="comments-error"></div>
+            </div>
+            
+            <button type="submit" class="btn btn-primary">Сохранить</button>
+        </form>
+    </div>
+
+    <div style="margin-top: 20px;">
+        <a href="{% url 'ebr:ebr_list' %}" class="btn">Назад к списку</a>
+    </div>
+</div>
+
+<script>
+// Проверка параметров в реальном времени
+function checkParameter(input) {
+    const actualValue = parseFloat(input.value.replace(',', '.'));
+    const target = parseFloat(input.dataset.target);
+    const tolerance = parseFloat(input.dataset.tolerance);
+    const critical = parseFloat(input.dataset.critical);
+    const statusSpan = document.querySelector(`[data-param="${input.dataset.param}"]`);
+    
+    if (isNaN(actualValue)) {
+        statusSpan.innerHTML = '<span class="indicator"></span> Не введено';
+        return;
+    }
+    
+    const diffPercent = Math.abs((actualValue - target) / target * 100);
+    
+    if (diffPercent > critical) {
+        statusSpan.innerHTML = '<span class="indicator indicator-red"></span> Критическое отклонение';
+        input.classList.add('error');
+    } else if (diffPercent > tolerance) {
+        statusSpan.innerHTML = '<span class="indicator indicator-yellow"></span> Отклонение';
+        input.classList.remove('error');
+    } else {
+        statusSpan.innerHTML = '<span class="indicator indicator-green"></span> В норме';
+        input.classList.remove('error');
+    }
+}
+
+document.querySelectorAll('.param-input').forEach(input => {
+    input.addEventListener('blur', function() { checkParameter(this); });
+});
+
+// Валидация полей ввода
+const extendedCharsRegex = /^[a-zA-Zа-яА-Я0-9\s\-._,;:!?()]+$/;
+
+function validateTextField(fieldId, errorId) {
+    const input = document.getElementById(fieldId);
+    const error = document.getElementById(errorId);
+    const value = input.value;
+    
+    if (value && !extendedCharsRegex.test(value)) {
+        input.classList.add('error');
+        error.textContent = 'Используются неразрешённые символы';
+        return false;
+    }
+    input.classList.remove('error');
+    error.textContent = '';
+    return true;
+}
+
+document.querySelector('textarea[name="inspection_notes"]').addEventListener('blur', function() {
+    validateTextField('inspection_notes', 'inspection-error');
+});
+
+document.getElementById('comments').addEventListener('blur', function() {
+    validateTextField('comments', 'comments-error');
+});
+</script>
+{% endblock %}

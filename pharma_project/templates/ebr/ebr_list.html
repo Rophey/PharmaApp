@@ -1,0 +1,103 @@
+{% extends 'base.html' %}
+
+{% block title %}Электронные паспорта партий (EBR){% endblock %}
+
+{% block content %}
+<div class="interface-section">
+    <h2>Электронные паспорта партий (EBR)</h2>
+
+    {% if user.user_role == 'технолог' %}
+    <div class="interface-section" style="margin-bottom: 20px;">
+        <h3>Запуск новой партии</h3>
+        
+        <div class="search-box">
+            <input type="text" id="search-mbr-code" placeholder="Код продукта...">
+            <button onclick="searchMBR()">Найти</button>
+        </div>
+
+        <table id="mbr-table">
+            <thead>
+                <tr>
+                    <th>Код продукта</th>
+                    <th>Наименование продукта</th>
+                    <th>Версия MBR</th>
+                    <th>Действие</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for mbr in approved_mbrs %}
+                <tr data-code="{{ mbr.product.product_code|lower }}">
+                    <td>{{ mbr.product.product_code }}</td>
+                    <td>{{ mbr.product.product_name }}</td>
+                    <td>{{ mbr.version }}</td>
+                    <td>
+                        <a href="{% url 'ebr:ebr_create' mbr.document_id %}" class="btn btn-success" style="padding: 5px 10px;">Запустить партию</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4">Нет утверждённых MBR</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <h3>Существующие партии</h3>
+    <table id="ebr-table">
+        <thead>
+            <tr>
+                <th>Номер партии</th>
+                <th>Продукт</th>
+                <th>Статус</th>
+                <th>Дата начала</th>
+                <th>Оператор</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ebr in ebrs %}
+            <tr>
+                <td>{{ ebr.batch_number }}</td>
+                <td>{{ ebr.mbr.product.product_name }}</td>
+                <td>
+                    {% if ebr.status.status_name == 'В работе' %}
+                        <span class="status-badge status-active">{{ ebr.status.status_name }}</span>
+                    {% elif ebr.status.status_name == 'Завершена' %}
+                        <span class="status-badge status-approved">{{ ebr.status.status_name }}</span>
+                    {% elif ebr.status.status_name == 'Заблокирована' %}
+                        <span class="status-badge status-blocked">{{ ebr.status.status_name }}</span>
+                    {% endif %}
+                </td>
+                <td>{{ ebr.start_date|date:"d.m.Y H:i" }}</td>
+                <td>{{ ebr.operator.get_full_name|default:"—" }}</td>
+                <td>
+                    <a href="{% url 'ebr:ebr_detail' ebr.document_id %}" class="btn btn-primary" style="padding: 5px 10px;">Просмотр</a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="6">Нет партий</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+function searchMBR() {
+    const searchTerm = document.getElementById('search-mbr-code').value.toLowerCase();
+    const rows = document.querySelectorAll('#mbr-table tbody tr');
+    
+    rows.forEach(row => {
+        const code = row.getAttribute('data-code');
+        if (code.includes(searchTerm) || searchTerm === '') {
+            row.style.display = '';
+        } else {
+            row.style.display = 'none';
+        }
+    });
+}
+</script>
+{% endblock %}

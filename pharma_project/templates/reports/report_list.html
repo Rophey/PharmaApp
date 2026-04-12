@@ -1,0 +1,98 @@
+{% extends 'base.html' %}
+
+{% block title %}Отчёты{% endblock %}
+
+{% block content %}
+<div class="interface-section">
+    <h2>Аналитика и отчёты</h2>
+
+    <div class="dashboard-grid">
+        <!-- Отчёт по выпуску продукции -->
+        <div class="card">
+            <h3>Отчёт по выпуску продукции</h3>
+            <p>Количество партий, процент брака, расход сырья</p>
+            <form method="post" action="{% url 'reports:generate_report' 'production' %}">
+                {% csrf_token %}
+                <div class="form-group">
+                    <label for="prod-start">Дата начала</label>
+                    <input type="date" id="prod-start" name="start_date" required>
+                </div>
+                <div class="form-group">
+                    <label for="prod-end">Дата окончания</label>
+                    <input type="date" id="prod-end" name="end_date" required>
+                </div>
+                <div class="form-group">
+                    <label for="prod-format">Формат</label>
+                    <select id="prod-format" name="format">
+                        <option value="excel">Excel</option>
+                        <option value="csv">CSV</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary">Сформировать отчёт</button>
+            </form>
+        </div>
+
+        <!-- Отчёт по отклонениям -->
+        <div class="card">
+            <h3>Отчёт по отклонениям</h3>
+            <p>Количество отклонений по типам</p>
+            <form method="post" action="{% url 'reports:generate_report' 'deviation' %}">
+                {% csrf_token %}
+                <div class="form-group">
+                    <label for="dev-start">Дата начала</label>
+                    <input type="date" id="dev-start" name="start_date" required>
+                </div>
+                <div class="form-group">
+                    <label for="dev-end">Дата окончания</label>
+                    <input type="date" id="dev-end" name="end_date" required>
+                </div>
+                <div class="form-group">
+                    <label for="dev-format">Формат</label>
+                    <select id="dev-format" name="format">
+                        <option value="excel">Excel</option>
+                        <option value="csv">CSV</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary">Сформировать отчёт</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Последние отчёты -->
+    <div class="interface-section" style="margin-top: 30px;">
+        <h3>Последние отчёты</h3>
+        <table id="recent-reports-table">
+            <thead>
+                <tr>
+                    <th>Тип отчёта</th>
+                    <th>Период</th>
+                    <th>Формат</th>
+                    <th>Дата генерации</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for report in recent_reports %}
+                <tr>
+                    <td>{{ report.template.name }}</td>
+                    <td>{{ report.start_date|date:"d.m.Y" }} - {{ report.end_date|date:"d.m.Y" }}</td>
+                    <td>{{ report.format|upper }}</td>
+                    <td>{{ report.generated_at|date:"d.m.Y H:i" }}</td>
+                    <td>
+                        {% if report.file %}
+                            <a href="{% url 'reports:download_report' report.id %}" class="btn btn-primary" style="padding: 5px 10px;">Скачать</a>
+                        {% else %}
+                            Нет файла
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5">Нет отчётов</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

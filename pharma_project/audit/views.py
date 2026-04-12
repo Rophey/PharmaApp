@@ -5,6 +5,7 @@ from mbr.models import Document
 from ebr.models import EBR
 import hashlib
 import json
+import datetime
 
 
 def audit_log(request):

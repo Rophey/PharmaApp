@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+
+{% block title %}Журнал аудита{% endblock %}
+
+{% block content %}
+<div class="interface-section">
+    <h2>Журнал аудита</h2>
+
+    <div class="alert alert-warning">
+        <strong>Внимание:</strong> Журнал аудита является неизменяемым. Записи не могут быть модифицированы или удалены.
+    </div>
+
+    <table id="audit-log-table">
+        <thead>
+            <tr>
+                <th>Дата и время</th>
+                <th>Пользователь</th>
+                <th>Действие</th>
+                <th>Документ</th>
+                <th>Комментарий</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td>{{ log.timestamp|date:"d.m.Y H:i:s" }}</td>
+                <td>{{ log.user.get_full_name }}</td>
+                <td>{{ log.action.action_name }}</td>
+                <td>
+                    {% if log.document %}
+                        Документ #{{ log.document.document_id }} ({{ log.document.type.type_name }})
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
+                <td>{{ log.comment|default:"—" }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5">Нет записей в журнале</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<style>
+#audit-log-table tbody tr:hover {
+    background-color: #f5f5f5;
+}
+</style>
+{% endblock %}

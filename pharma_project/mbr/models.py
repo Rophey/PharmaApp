@@ -102,6 +102,7 @@ class MBR(models.Model):
 
 
 class MBRRawMaterial(models.Model):
+    id = models.AutoField(primary_key=True)
     mbr = models.ForeignKey(MBR, on_delete=models.CASCADE)
     raw_material = models.ForeignKey(RawMaterial, on_delete=models.CASCADE)
 
@@ -111,9 +112,18 @@ class MBRRawMaterial(models.Model):
 
 
 class MBRParameter(models.Model):
+    """Параметры конкретного MBR (хранят свои значения для каждого MBR)"""
+    id = models.AutoField(primary_key=True)
     mbr = models.ForeignKey(MBR, on_delete=models.CASCADE)
     parameter = models.ForeignKey(Parameter, on_delete=models.CASCADE)
+    # Своя копия значений для ЭТОГО MBR
+    value = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name='Значение')
+    tolerance = models.DecimalField(max_digits=5, decimal_places=2, default=0, verbose_name='Допустимое отклонение (%)')
+    critical_deviation = models.DecimalField(max_digits=5, decimal_places=2, default=0, verbose_name='Критическое отклонение (%)')
 
     class Meta:
         db_table = 'MBR_Parameters'
         unique_together = ['mbr', 'parameter']
+
+    def __str__(self):
+        return f"{self.parameter.parameter_name}: {self.value} {self.parameter.unit}"

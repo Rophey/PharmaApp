@@ -37,13 +37,18 @@
                 <td>{{ mbr.approval_date|date:"d.m.Y"|default:"—" }}</td>
                 <td>
                     <div class="action-buttons">
-                        <button class="action-btn" onclick="showMbrDetail({{ mbr.document_id }})">Просмотр</button>
-                        {% if mbr.status.status_name == 'Черновик' %}
-                            <button class="action-btn" onclick="editMbr({{ mbr.document_id }})">Редактировать</button>
-                            <button class="action-btn success" onclick="approveMbr({{ mbr.document_id }})">Утвердить</button>
-                        {% endif %}
-                        {% if mbr.status.status_name == 'Утверждён' %}
-                            <button class="action-btn" onclick="newMbrVersion({{ mbr.document_id }})">Новая версия</button>
+                        {% if mbr.document_id %}
+                            <button class="action-btn" onclick="showMbrDetail({{ mbr.document_id }})">Просмотр</button>
+                            {% if mbr.status.status_name == 'Черновик' %}
+                                <button class="action-btn" onclick="editMbr({{ mbr.document_id }})">Редактировать</button>
+                                <button class="action-btn success" onclick="approveMbr({{ mbr.document_id }})">Утвердить</button>
+                                <button class="action-btn" style="background-color: #e74c3c;" onclick="deleteMbr({{ mbr.document_id }})">Удалить</button>
+                            {% endif %}
+                            {% if mbr.status.status_name == 'Утверждён' %}
+                                <button class="action-btn" onclick="newMbrVersion({{ mbr.document_id }})">Новая версия</button>
+                            {% endif %}
+                        {% else %}
+                            —
                         {% endif %}
                     </div>
                 </td>
@@ -58,31 +63,26 @@
 </div>
 
 <!-- Вкладка 2: Создание MBR -->
-<!-- Вкладка 2: Создание MBR -->
 <div class="tab-content" id="mbr-create-tab">
     <h3>Создание новой рецептуры</h3>
 
     <form id="mbr-form" method="post" action="{% url 'users:chief_technologist_dashboard' %}">
         {% csrf_token %}
-        <input type="hidden" name="action" value="create_mbr">
+        <input type="hidden" name="form_action" value="create_mbr">
 
         <div class="card">
             <h4>Основная информация</h4>
 
             <div class="form-group">
-                <label>Наименование продукта *</label>
-                <input type="text" name="product_name" id="product_name" required
-                       pattern="[А-Яа-яA-Za-z0-9\s]+"
-                       title="Только буквы и цифры">
-                <div class="error-message" id="product_name_error"></div>
-            </div>
-
-            <div class="form-group">
-                <label>Код продукта *</label>
-                <input type="text" name="product_code" id="product_code" required
-                       pattern="[A-Z0-9-]+"
-                       title="Только латиница, цифры и дефис">
-                <div class="error-message" id="product_code_error"></div>
+                <label>Продукт *</label>
+                <select name="product_id" id="product_id" required class="form-control">
+                    <option value="">-- Выберите продукт --</option>
+                    {% for product in products %}
+                    <option value="{{ product.id }}">{{ product.product_code }} - {{ product.product_name }}</option>
+                    {% endfor %}
+                </select>
+                <div class="error-message" id="product_id_error"></div>
+                <small>Только из существующего справочника</small>
             </div>
 
             <div class="form-group">
@@ -98,7 +98,7 @@
         </div>
 
         <div class="card">
-            <h4>Сырьё</h4>
+            <h4>Сырьё (выбор из справочника)</h4>
 
             <div class="search-box">
                 <input type="text" id="raw-material-search" placeholder="Поиск сырья">
@@ -119,8 +119,8 @@
         </div>
 
         <div class="card">
-            <h4>Параметры процесса</h4>
-            <table>
+            <h4>Параметры процесса (из справочника)</h4>
+            <table class="parameters-table">
                 <thead>
                     <tr>
                         <th>Параметр</th>
@@ -130,29 +130,29 @@
                         <th>Крит. отклонение (%)</th>
                     </tr>
                 </thead>
-                <tbody id="parameters-tbody">
+                <tbody>
                     {% for param in parameters %}
                     <tr>
                         <td>{{ param.parameter_name }}</td>
                         <td>
                             <input type="text"
-                                   name="param_value_{{ param.parameter_id }}"
-                                   id="param_value_{{ param.parameter_id }}"
+                                   name="param_value_{{ param.id }}"
+                                   id="param_value_{{ param.id }}"
                                    value="{{ param.value }}"
                                    required>
                         </td>
                         <td>{{ param.unit }}</td>
                         <td>
                             <input type="text"
-                                   name="param_tolerance_{{ param.parameter_id }}"
-                                   id="param_tolerance_{{ param.parameter_id }}"
+                                   name="param_tolerance_{{ param.id }}"
+                                   id="param_tolerance_{{ param.id }}"
                                    value="{{ param.tolerance }}"
                                    required>
                         </td>
                         <td>
                             <input type="text"
-                                   name="param_critical_{{ param.parameter_id }}"
-                                   id="param_critical_{{ param.parameter_id }}"
+                                   name="param_critical_{{ param.id }}"
+                                   id="param_critical_{{ param.id }}"
                                    value="{{ param.critical_deviation }}"
                                    required>
                         </td>
@@ -186,136 +186,6 @@
     </div>
 </div>
 
-<script>
-// Переключение вкладок
-document.querySelectorAll('.nav-tab').forEach(tab => {
-    tab.addEventListener('click', function() {
-        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-        this.classList.add('active');
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.getElementById(this.dataset.tab + '-tab').classList.add('active');
-    });
-});
-
-// Поиск сырья
-function searchRawMaterial() {
-    const searchTerm = document.getElementById('raw-material-search').value.trim();
-    if (!searchTerm) {
-        alert('Введите название сырья для поиска');
-        return;
-    }
-
-    // В реальном проекте здесь должен быть AJAX запрос к серверу
-    // Для демо добавим тестовые данные
-    const mockMaterials = [
-        { id: 1, name: 'Ацетилсалициловая кислота' },
-        { id: 2, name: 'Парацетамол' },
-        { id: 3, name: 'Ибупрофен' },
-        { id: 4, name: 'Крахмал кукурузный' },
-        { id: 5, name: 'Целлюлоза микрокристаллическая' },
-        { id: 6, name: 'Стеарат магния' },
-    ];
-
-    const filtered = mockMaterials.filter(m =>
-        m.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    const tbody = document.getElementById('selected-raw-materials');
-
-    filtered.forEach(material => {
-        // Проверяем, нет ли уже такого
-        const existing = Array.from(tbody.querySelectorAll('input')).some(
-            input => input.value == material.id
-        );
-
-        if (!existing) {
-            const row = tbody.insertRow();
-            row.innerHTML = `
-                <td>${material.name}</td>
-                <td><button type="button" class="action-btn btn-danger" onclick="this.closest('tr').remove()">Удалить</button></td>
-                <input type="hidden" name="raw_materials" value="${material.id}">
-            `;
-        }
-    });
-}
-
-// Валидация формы перед отправкой
-document.getElementById('mbr-form').addEventListener('submit', function(e) {
-    // Сброс ошибок
-    document.querySelectorAll('.error-message').forEach(el => el.textContent = '');
-
-    let hasError = false;
-
-    // Проверка обязательных полей
-    const productName = document.getElementById('product_name');
-    const productCode = document.getElementById('product_code');
-    const operations = document.getElementById('operations');
-
-    if (!productName.value.trim()) {
-        document.getElementById('product_name_error').textContent = 'Введите наименование продукта';
-        hasError = true;
-    }
-
-    if (!productCode.value.trim()) {
-        document.getElementById('product_code_error').textContent = 'Введите код продукта';
-        hasError = true;
-    } else if (!/^[A-Z0-9-]+$/.test(productCode.value)) {
-        document.getElementById('product_code_error').textContent = 'Только латиница, цифры и дефис';
-        hasError = true;
-    }
-
-    if (!operations.value.trim()) {
-        document.getElementById('operations_error').textContent = 'Введите описание операций';
-        hasError = true;
-    }
-
-    // Проверка параметров
-    const paramRows = document.querySelectorAll('#parameters-tbody tr');
-    if (paramRows.length === 0) {
-        alert('Добавьте параметры процесса');
-        hasError = true;
-    }
-
-    if (hasError) {
-        e.preventDefault();
-        return false;
-    }
-
-    // Показываем сообщение о сохранении
-    const submitBtn = e.submitter;
-    const originalText = submitBtn.textContent;
-    submitBtn.textContent = 'Сохранение...';
-    submitBtn.disabled = true;
-
-    // Форма отправится автоматически после этой функции
-    // Разблокируем кнопку через 5 секунд на случай ошибки
-    setTimeout(() => {
-        submitBtn.textContent = originalText;
-        submitBtn.disabled = false;
-    }, 5000);
-});
-
-// Добавляем индикатор загрузки
-const style = document.createElement('style');
-style.textContent = `
-    .btn-success:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-    }
-
-    .error-message {
-        color: var(--danger-color);
-        font-size: 0.85rem;
-        margin-top: 5px;
-    }
-
-    input.error, textarea.error {
-        border-color: var(--danger-color);
-    }
-`;
-document.head.appendChild(style);
-</script>
-
 <style>
 .modal {
     position: fixed;
@@ -348,5 +218,525 @@ document.head.appendChild(style);
 .close:hover {
     color: var(--danger-color);
 }
+
+.btn-success:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.error-message {
+    color: var(--danger-color);
+    font-size: 0.85rem;
+    margin-top: 5px;
+}
+
+input.error, select.error, textarea.error {
+    border-color: var(--danger-color);
+}
+
+.parameters-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+}
+
+.parameters-table th {
+    background-color: var(--light-color);
+    padding: 8px;
+    text-align: left;
+}
+
+.parameters-table td {
+    padding: 8px;
+    border-bottom: 1px solid #ddd;
+}
 </style>
+
+<script>
+// Глобальные функции
+window.searchRawMaterial = function() {
+    const searchTerm = document.getElementById('raw-material-search').value.trim();
+    if (!searchTerm) {
+        alert('Введите название сырья для поиска');
+        return;
+    }
+
+    // Данные из справочника
+    const availableMaterials = [
+        {% for material in raw_materials %}
+        { id: {{ material.id }}, name: '{{ material.material_name|escapejs }}' },
+        {% endfor %}
+    ];
+
+    console.log('Available materials:', availableMaterials);
+
+    const filtered = availableMaterials.filter(m =>
+        m.name.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    if (filtered.length === 0) {
+        alert('Сырьё не найдено в справочнике');
+        return;
+    }
+
+    const tbody = document.getElementById('selected-raw-materials');
+    if (!tbody) return;
+
+    filtered.forEach(material => {
+        // Проверяем, нет ли уже такого
+        const existing = Array.from(tbody.querySelectorAll('input[type="hidden"]')).some(
+            input => parseInt(input.value) === material.id
+        );
+
+        if (!existing) {
+            const row = tbody.insertRow();
+            row.innerHTML = `
+                <td>${material.name}</td>
+                <td><button type="button" class="action-btn btn-danger" onclick="this.closest('tr').remove()">Удалить</button></td>
+                <input type="hidden" name="raw_materials" value="${material.id}">
+            `;
+        }
+    });
+};
+
+window.showMbrDetail = function(mbrId) {
+    if (!mbrId || mbrId === 'None' || mbrId === 'undefined') {
+        alert('Ошибка: MBR не имеет идентификатора');
+        return;
+    }
+    
+    console.log('Loading MBR detail, id:', mbrId);
+    
+    fetch(`/api/mbr/${mbrId}/`)
+        .then(response => {
+            console.log('Response status:', response.status);
+            if (!response.ok) {
+                return response.text().then(text => {
+                    throw new Error(`MBR not found (status ${response.status}): ${text.substring(0, 100)}`);
+                });
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log('MBR data:', data);
+            const content = document.getElementById('mbr-detail-content');
+            if (!content) return;
+
+            // Формируем таблицу параметров
+            let paramsHtml = '';
+            if (data.parameters && data.parameters.length > 0) {
+                paramsHtml = `
+                    <h4>Параметры процесса:</h4>
+                    <table class="parameters-table">
+                        <thead>
+                            <tr>
+                                <th>Параметр</th>
+                                <th>Значение</th>
+                                <th>Ед. изм.</th>
+                                <th>Допуск %</th>
+                                <th>Крит. откл. %</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.parameters.map(p => `
+                                <tr>
+                                    <td>${p.name}</td>
+                                    <td>${p.value}</td>
+                                    <td>${p.unit}</td>
+                                    <td>±${p.tolerance}%</td>
+                                    <td>${p.critical}%</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } else {
+                paramsHtml = '<p>Нет параметров</p>';
+            }
+
+            // Формируем список сырья
+            let materialsHtml = '';
+            if (data.raw_materials && data.raw_materials.length > 0) {
+                materialsHtml = `
+                    <h4>Сырьё:</h4>
+                    <ul>
+                        ${data.raw_materials.map(rm => `<li>${rm.name}</li>`).join('')}
+                    </ul>
+                `;
+            } else {
+                materialsHtml = '<p>Нет сырья</p>';
+            }
+
+            content.innerHTML = `
+                <h2>MBR: ${data.product_code} v${data.version}</h2>
+                <p><strong>Продукт:</strong> ${data.product_name}</p>
+                <p><strong>Статус:</strong> <span class="status-badge ${data.status === 'Утверждён' ? 'status-approved' : 'status-draft'}">${data.status}</span></p>
+                <p><strong>Операции:</strong> ${data.operations.replace(/\n/g, '<br>')}</p>
+                <p><strong>Комментарий:</strong> ${data.comments || '—'}</p>
+
+                ${materialsHtml}
+                ${paramsHtml}
+            `;
+            document.getElementById('mbr-modal').style.display = 'block';
+        })
+        .catch(error => {
+            alert('Ошибка при загрузке MBR: ' + error.message);
+        });
+};
+
+window.closeModal = function() {
+    document.getElementById('mbr-modal').style.display = 'none';
+};
+
+window.editMbr = function(mbrId) {
+    if (!mbrId || mbrId === 'None' || mbrId === 'undefined') {
+        alert('Ошибка: MBR не имеет идентификатора');
+        return;
+    }
+    
+    console.log('Loading MBR for edit, id:', mbrId);
+    
+    // Загружаем данные MBR для редактирования
+    fetch(`/api/mbr/${mbrId}/edit/`)
+        .then(response => {
+            console.log('Response status:', response.status);
+            if (!response.ok) {
+                return response.text().then(text => {
+                    throw new Error(`Failed to load MBR data (status ${response.status}): ${text.substring(0, 100)}`);
+                });
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log('MBR edit data:', data);
+            // Переключаемся на вкладку создания
+            document.querySelector('[data-tab="mbr-create"]').click();
+
+            // Заполняем форму
+            const form = document.getElementById('mbr-form');
+
+            // Меняем action для обновления
+            form.action = `/api/mbr/${mbrId}/update/`;
+
+            // Заполняем поля
+            document.getElementById('product_id').value = data.product_id;
+            document.getElementById('version').value = data.version;
+            document.getElementById('operations').value = data.operations;
+            document.getElementById('comments').value = data.comments || '';
+
+            // Заполняем сырьё
+            const tbody = document.getElementById('selected-raw-materials');
+            tbody.innerHTML = '';
+            data.raw_materials.forEach(material => {
+                const row = tbody.insertRow();
+                row.innerHTML = `
+                    <td>${material.name}</td>
+                    <td><button type="button" class="action-btn btn-danger" onclick="this.closest('tr').remove()">Удалить</button></td>
+                    <input type="hidden" name="raw_materials" value="${material.id}">
+                `;
+            });
+
+            // Заполняем параметры
+            data.parameters.forEach(param => {
+                const valueInput = document.getElementById(`param_value_${param.id}`);
+                const toleranceInput = document.getElementById(`param_tolerance_${param.id}`);
+                const criticalInput = document.getElementById(`param_critical_${param.id}`);
+
+                if (valueInput) valueInput.value = param.value;
+                if (toleranceInput) toleranceInput.value = param.tolerance;
+                if (criticalInput) criticalInput.value = param.critical;
+            });
+
+            // Меняем текст кнопок
+            const saveBtn = document.querySelector('button[name="save_draft"]');
+            const approveBtn = document.querySelector('button[name="approve"]');
+
+            saveBtn.textContent = 'Обновить черновик';
+            approveBtn.style.display = 'none';  // Скрываем кнопку утверждения при редактировании
+        })
+        .catch(error => {
+            alert('Ошибка при загрузке данных для редактирования: ' + error.message);
+        });
+};
+
+window.approveMbr = function(mbrId) {
+    if (!mbrId || mbrId === 'None' || mbrId === 'undefined') {
+        alert('Ошибка: MBR не имеет идентифкатора');
+        return;
+    }
+    
+    if (confirm('Утвердить MBR?')) {
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        fetch(`/api/mbr/${mbrId}/approve/`, {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRFToken': csrfToken
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert('Ошибка: ' + (data.error || 'Не удалось утвердить MBR'));
+            }
+        })
+        .catch(error => {
+            console.error('Approve error:', error);
+            alert('Ошибка при утверждении MBR: ' + error.message);
+        });
+    }
+};
+
+window.newMbrVersion = function(mbrId) {
+    if (!mbrId || mbrId === 'None' || mbrId === 'undefined') {
+        alert('Ошибка: MBR не имеет идентифкатора');
+        return;
+    }
+    
+    if (confirm('Создать новую версию?')) {
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        fetch(`/mbr/${mbrId}/new-version/`, {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRFToken': csrfToken
+            }
+        })
+        .then(response => {
+            // Если redirect (HTML), просто перезагружаем
+            if (response.status === 302) {
+                location.reload();
+                return;
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data && data.success) {
+                location.reload();
+            } else if (data && data.error) {
+                alert('Ошибка: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('New version error:', error);
+            // При редиректе это нормально — просто перезагружаем
+            location.reload();
+        });
+    }
+};
+
+window.deleteMbr = function(mbrId) {
+    if (!mbrId || mbrId === 'None' || mbrId === 'undefined') {
+        alert('Ошибка: MBR не имеет идентификатора');
+        return;
+    }
+    
+    if (!confirm('Удалить черновик MBR? Это действие нельзя отменить.')) {
+        return;
+    }
+    
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+    fetch(`/mbr/${mbrId}/delete/`, {
+        method: 'POST',
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRFToken': csrfToken
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('Ошибка: ' + (data.error || 'Не удалось удалить MBR'));
+        }
+    })
+    .catch(error => {
+        console.error('Delete error:', error);
+        // При redirect это нормально
+        location.reload();
+    });
+};
+
+// Функция для сброса формы
+window.resetMbrForm = function() {
+    const form = document.getElementById('mbr-form');
+    if (!form) return;
+
+    // Сбрасываем action на стандартный
+    form.action = "{% url 'users:chief_technologist_dashboard' %}";
+
+    // Очищаем форму
+    form.reset();
+
+    // Очищаем таблицу сырья
+    const tbody = document.getElementById('selected-raw-materials');
+    if (tbody) tbody.innerHTML = '';
+
+    // Возвращаем кнопки в исходное состояние
+    const saveBtn = document.querySelector('button[name="save_draft"]');
+    const approveBtn = document.querySelector('button[name="approve"]');
+
+    if (saveBtn) saveBtn.textContent = 'Сохранить черновик';
+    if (approveBtn) approveBtn.style.display = 'inline-block';
+
+    // Сбрасываем параметры к значениям по умолчанию - ИСПРАВЛЕНО
+    {% for param in parameters %}
+    (function() {
+        const valueField = document.getElementById('param_value_{{ param.id }}');
+        const toleranceField = document.getElementById('param_tolerance_{{ param.id }}');
+        const criticalField = document.getElementById('param_critical_{{ param.id }}');
+
+        if (valueField) valueField.value = '{{ param.value }}';
+        if (toleranceField) toleranceField.value = '{{ param.tolerance }}';
+        if (criticalField) criticalField.value = '{{ param.critical_deviation }}';
+    })();
+    {% endfor %}
+    // Сбрасываем action на стандартный
+    form.setAttribute('action', "{% url 'users:chief_technologist_dashboard' %}");
+};
+
+// Инициализация после загрузки страницы
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, initializing tabs...');
+
+    // Переключение вкладок
+    const tabs = document.querySelectorAll('.nav-tab');
+    console.log('Found tabs:', tabs.length);
+
+    tabs.forEach(tab => {
+        tab.addEventListener('click', function(e) {
+            e.preventDefault();
+            console.log('Tab clicked:', this.dataset.tab);
+
+            // Убираем active у всех вкладок
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+
+            // Добавляем active текущей вкладке
+            this.classList.add('active');
+
+            // Переключаем контент
+            const targetId = this.dataset.tab + '-tab';
+            console.log('Target tab content:', targetId);
+
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+
+            const targetContent = document.getElementById(targetId);
+            if (targetContent) {
+                targetContent.classList.add('active');
+            }
+
+            // Если переключились на вкладку создания, сбрасываем форму
+            if (this.dataset.tab === 'mbr-create') {
+                resetMbrForm();
+            }
+        });
+    });
+
+    // Валидация и отправка формы
+    const mbrForm = document.getElementById('mbr-form');
+    if (mbrForm) {
+        mbrForm.addEventListener('submit', function(e) {
+            e.preventDefault(); // Отменяем стандартную отправку
+
+            console.log('=== Форма отправляется ===');
+            const formData = new FormData(mbrForm);
+            for (let pair of formData.entries()) {
+                console.log(pair[0] + ': ' + pair[1]);
+            }
+
+            // Сброс ошибок
+            document.querySelectorAll('.error-message').forEach(el => el.textContent = '');
+
+            let hasError = false;
+
+            // Проверка выбора продукта
+            const productSelect = document.getElementById('product_id');
+            if (!productSelect || !productSelect.value) {
+                document.getElementById('product_id_error').textContent = 'Выберите продукт из справочника';
+                hasError = true;
+                console.log('Ошибка: продукт не выбран');
+            }
+
+            // Проверка операций
+            const operations = document.getElementById('operations');
+            if (!operations || !operations.value.trim()) {
+                document.getElementById('operations_error').textContent = 'Введите описание операций';
+                hasError = true;
+                console.log('Ошибка: операции не введены');
+            }
+
+            if (hasError) {
+                console.log('=== Форма не отправлена из-за ошибок ===');
+                return false;
+            }
+
+            console.log('=== Валидация пройдена, отправляем форму ===');
+
+            // Показываем сообщение о сохранении
+            const submitBtn = e.submitter;
+            const originalText = submitBtn.textContent;
+            submitBtn.textContent = 'Сохранение...';
+            submitBtn.disabled = true;
+
+            // Определяем URL для отправки - ИСПРАВЛЕНО
+            let url = mbrForm.getAttribute('action'); // Используем getAttribute вместо .action
+            console.log('Original action URL:', url, 'type:', typeof url);
+
+            // Если action не задан или это не строка, используем URL по умолчанию
+            if (!url || typeof url !== 'string' || url === "{% url 'users:chief_technologist_dashboard' %}") {
+                url = "{% url 'users:chief_technologist_dashboard' %}";
+                console.log('Using default URL:', url);
+            }
+
+            // Отправляем форму через fetch
+            fetch(url, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                }
+            })
+            .then(response => {
+                console.log('Response status:', response.status);
+                return response.text().then(text => {
+                    try {
+                        // Пытаемся распарсить JSON
+                        return JSON.parse(text);
+                    } catch (e) {
+                        // Если не JSON, возвращаем текст ошибки
+                        console.error('Response is not JSON:', text.substring(0, 200));
+                        throw new Error('Server returned non-JSON response');
+                    }
+                });
+            })
+            .then(data => {
+                console.log('Response data:', data);
+                if (data.success) {
+                    // Возвращаемся к списку MBR
+                    document.querySelector('[data-tab="mbr-list"]').click();
+
+                    // Перезагружаем страницу для обновления списка
+                    location.reload();
+                } else {
+                    alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+                    submitBtn.textContent = originalText;
+                    submitBtn.disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error('Fetch error:', error);
+                alert('Ошибка при отправке: ' + error.message);
+                submitBtn.textContent = originalText;
+                submitBtn.disabled = false;
+            });
+        });
+    }
+});
+</script>
 {% endblock %}
