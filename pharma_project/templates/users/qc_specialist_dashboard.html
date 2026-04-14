@@ -1,21 +1,17 @@
 {% extends 'base.html' %}
 
+{% block title %}Панель сотрудника ОКК{% endblock %}
+
 {% block content %}
 <h1>Панель сотрудника ОКК</h1>
 
-<div class="alert alert-warning">
-    У вас есть {{ tasks|length }} активных заданий
+<div class="alert" style="background: #e8f5e9; padding: 10px 15px; border-left: 4px solid #219854; margin-bottom: 20px; border-radius: 4px;">
+    📋 Активных заданий: <strong id="tasks-count">{{ tasks|length }}</strong>
 </div>
 
-<div class="nav-tabs">
-    <div class="nav-tab active" data-tab="tasks">Задания ОКК</div>
-    <div class="nav-tab" data-tab="testing">Лабораторные испытания</div>
-</div>
-
-<!-- Вкладка 1: Список заданий -->
-<div class="tab-content active" id="tasks-tab">
-    <h3>Задания контроля качества</h3>
-
+<!-- Список заданий -->
+<div id="tasks-container">
+    {% if tasks %}
     <table>
         <thead>
             <tr>
@@ -27,184 +23,199 @@
                 <th>Действия</th>
             </tr>
         </thead>
-        <tbody>
+        <tbody id="tasks-tbody">
             {% for task in tasks %}
-            <tr>
+            <tr data-id="{{ task.id }}">
                 <td>{{ task.ebr.batch_number }}</td>
                 <td>{{ task.ebr.mbr.product.product_name }}</td>
                 <td>{{ task.get_task_type_display }}</td>
                 <td>{{ task.due_date|date:"d.m.Y H:i" }}</td>
                 <td>
-                    <span class="status-badge
-                        {% if task.status == 'new' %}status-draft
-                        {% elif task.status == 'in_progress' %}status-active
-                        {% elif task.status == 'completed' %}status-approved
-                        {% endif %}">
+                    <span class="status-badge {% if task.status == 'new' %}status-draft{% elif task.status == 'in_progress' %}status-active{% else %}status-approved{% endif %}">
                         {{ task.get_status_display }}
                     </span>
                 </td>
                 <td>
-                    <button class="action-btn" onclick="showTaskDetail({{ task.id }})">
-                        {% if task.status == 'completed' %}Просмотр{% else %}Выполнить{% endif %}
-                    </button>
+                    <button class="btn btn-success" onclick="openTaskForm({{ task.id }}, '{{ task.ebr.batch_number|escapejs }}', '{{ task.ebr.mbr.product.product_name|escapejs }}', {{ task.ebr.document_id }})">Выполнить</button>
                 </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="6">Нет активных заданий</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+    {% else %}
+    <p style="color: #7f8c8d; text-align: center; padding: 30px;">Нет активных заданий</p>
+    {% endif %}
 </div>
 
-<!-- Вкладка 2: Лабораторные испытания -->
-<div class="tab-content" id="testing-tab">
-    <h3>Ввод результатов лабораторных испытаний</h3>
+<!-- Модальное окно выполнения задания -->
+<div id="task-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 600px;">
+        <span class="close" onclick="closeTaskModal()">&times;</span>
+        <h2 id="modal-title">Выполнение задания</h2>
+        <p id="modal-info" style="color: #7f8c8d; margin-bottom: 15px;"></p>
 
-    <form id="qc-test-form" method="post" enctype="multipart/form-data">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="submit_qc_results">
-
-        <div class="card">
+        <form id="qc-form" onsubmit="submitQCForm(event)">
+            {% csrf_token %}
             <div class="form-group">
-                <label>Выберите партию</label>
-                <select name="ebr_id" required onchange="loadBatchParameters(this.value)">
-                    <option value="">-- Выберите партию --</option>
-                    {% for task in tasks %}
-                        {% if task.task_type == 'testing' %}
-                        <option value="{{ task.ebr.document_id }}">{{ task.ebr.batch_number }} - {{ task.ebr.mbr.product.product_name }}</option>
-                        {% endif %}
-                    {% endfor %}
-                </select>
-            </div>
-        </div>
-
-        <div id="batch-parameters" style="display: none;">
-            <div class="card">
-                <h4>Параметры для тестирования</h4>
-                <table id="parameters-table">
-                    <thead>
-                        <tr>
-                            <th>Параметр</th>
-                            <th>Норма</th>
-                            <th>Результат</th>
-                            <th>Ед. изм.</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
-                </table>
+                <label>Визуальный контроль *</label>
+                <textarea name="visual_control" rows="3" required placeholder="Опишите результаты визуального контроля"></textarea>
             </div>
 
-            <div class="card">
-                <h4>Результаты испытаний</h4>
-
-                <div class="form-group">
-                    <label>Визуальный контроль</label>
-                    <textarea name="visual_control" rows="3" required></textarea>
-                </div>
-
-                <div class="form-group">
-                    <label>Протокол испытаний (PDF)</label>
-                    <input type="file" name="test_protocol" accept=".pdf,.jpg,.png">
-                </div>
-
-                <div class="form-group">
-                    <label>Комментарий</label>
-                    <textarea name="comments" rows="3"></textarea>
-                </div>
+            <div class="form-group">
+                <label>Результат времени распадаемости (мин) *</label>
+                <input type="number" name="lab_results" step="0.1" required placeholder="Введите значение">
             </div>
+
+            <div class="form-group">
+                <label>Комментарий</label>
+                <textarea name="comments" rows="2" placeholder="Дополнительная информация"></textarea>
+            </div>
+
+            <div id="form-error" style="color: #e74c3c; margin: 10px 0; display: none;"></div>
 
             <div class="action-buttons">
-                <button type="submit" class="btn-success">Сохранить результаты</button>
-                <button type="submit" name="confirm" value="1" class="btn-success">Подтвердить выполнение</button>
+                <button type="submit" class="btn btn-success">Сохранить и завершить</button>
+                <button type="button" class="btn" onclick="closeTaskModal()">Отмена</button>
             </div>
-        </div>
-    </form>
-</div>
-
-<!-- Модальное окно деталей задания -->
-<div id="task-modal" class="modal" style="display: none;">
-    <div class="modal-content">
-        <span class="close" onclick="closeTaskModal()">&times;</span>
-        <div id="task-detail-content"></div>
+        </form>
     </div>
 </div>
 
+<style>
+.modal {
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.4);
+}
+.modal-content {
+    background-color: white;
+    margin: 5% auto;
+    padding: 25px;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+.close {
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.close:hover {
+    color: #e74c3c;
+}
+</style>
+
 <script>
-function showTaskDetail(taskId) {
-    fetch(`/api/qc/task/${taskId}/`)
-        .then(response => response.json())
-        .then(data => {
-            const content = document.getElementById('task-detail-content');
-            content.innerHTML = `
-                <h2>Задание #${taskId}</h2>
-                <p><strong>Партия:</strong> ${data.batch_number}</p>
-                <p><strong>Продукт:</strong> ${data.product_name}</p>
-                <p><strong>Тип задания:</strong> ${data.task_type}</p>
-                <p><strong>Статус:</strong> ${data.status}</p>
-                <p><strong>Срок:</strong> ${data.due_date}</p>
-                <p><strong>Создано:</strong> ${data.created_by}</p>
+var currentTaskId = null;
 
-                ${data.results ? `
-                    <h3>Результаты:</h3>
-                    <p><strong>Визуальный контроль:</strong> ${data.results.visual_control}</p>
-                    <p><strong>Лабораторные:</strong> ${data.results.lab_results}</p>
-                    <p><strong>Дата:</strong> ${data.results.submitted_at}</p>
-                ` : ''}
-
-                ${data.status !== 'completed' ? `
-                    <button class="btn-success" onclick="startTesting(${taskId})">Начать тестирование</button>
-                ` : ''}
-            `;
-            document.getElementById('task-modal').style.display = 'block';
-        });
+function openTaskForm(taskId, batchNumber, productName, ebrId) {
+    currentTaskId = taskId;
+    document.getElementById('modal-title').textContent = 'Задание: ' + batchNumber;
+    document.getElementById('modal-info').textContent = 'Партия: ' + batchNumber + ' — ' + productName;
+    document.getElementById('qc-form').reset();
+    document.getElementById('form-error').style.display = 'none';
+    document.getElementById('task-modal').style.display = 'block';
 }
 
 function closeTaskModal() {
     document.getElementById('task-modal').style.display = 'none';
+    currentTaskId = null;
 }
 
-function loadBatchParameters(ebrId) {
-    if (!ebrId) {
-        document.getElementById('batch-parameters').style.display = 'none';
-        return;
-    }
+function submitQCForm(e) {
+    e.preventDefault();
+    var form = document.getElementById('qc-form');
+    var errorEl = document.getElementById('form-error');
+    errorEl.style.display = 'none';
 
-    fetch(`/api/ebr/${ebrId}/parameters/`)
-        .then(response => response.json())
-        .then(data => {
-            const tbody = document.querySelector('#parameters-table tbody');
-            tbody.innerHTML = '';
+    var formData = new FormData(form);
+    var csrfInput = document.querySelector('[name=csrfmiddlewaretoken]');
+    var csrfToken = csrfInput ? csrfInput.value : '';
 
-            data.parameters.forEach(param => {
-                tbody.innerHTML += `
-                    <tr>
-                        <td>${param.name}</td>
-                        <td>${param.target} ±${param.tolerance}%</td>
-                        <td><input type="text" name="param_${param.id}" placeholder="Введите значение"></td>
-                        <td>${param.unit}</td>
-                    </tr>
-                `;
-            });
-
-            document.getElementById('batch-parameters').style.display = 'block';
-        });
-}
-
-function startTesting(taskId) {
-    document.querySelector('[data-tab="testing"]').click();
-    document.getElementById('batch-parameters').style.display = 'block';
-}
-
-// Переключение вкладок
-document.querySelectorAll('.nav-tab').forEach(tab => {
-    tab.addEventListener('click', function() {
-        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-        this.classList.add('active');
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.getElementById(this.dataset.tab + '-tab').classList.add('active');
+    fetch('/api/qc/submit/' + currentTaskId + '/', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: formData,
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRFToken': csrfToken
+        }
+    })
+    .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+    })
+    .then(function(data) {
+        if (data.success) {
+            alert(data.message);
+            closeTaskModal();
+            refreshTasks();
+        } else {
+            errorEl.textContent = data.error || 'Ошибка при сохранении';
+            errorEl.style.display = 'block';
+        }
+    })
+    .catch(function(err) {
+        console.error('QC submit error:', err);
+        errorEl.textContent = 'Ошибка соединения с сервером: ' + err.message;
+        errorEl.style.display = 'block';
     });
-});
+}
+
+// AJAX-обновление списка заданий
+var lastCount = -1;
+setInterval(function() {
+    refreshTasks();
+}, 3000);
+
+function refreshTasks() {
+    fetch('/api/qc/tasks/', { credentials: 'same-origin' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.success) return;
+
+        var tasks = data.tasks;
+        if (tasks.length === lastCount) return;
+        lastCount = tasks.length;
+
+        document.getElementById('tasks-count').textContent = tasks.length;
+        var container = document.getElementById('tasks-container');
+
+        if (tasks.length === 0) {
+            container.innerHTML = '<p style="color: #7f8c8d; text-align: center; padding: 30px;">Нет активных заданий</p>';
+            return;
+        }
+
+        var statusClasses = { 'new': 'status-draft', 'in_progress': 'status-active', 'completed': 'status-approved' };
+        var html = '<table><thead><tr><th>Номер партии</th><th>Продукт</th><th>Тип задания</th><th>Срок выполнения</th><th>Статус</th><th>Действия</th></tr></thead><tbody id="tasks-tbody">';
+        tasks.forEach(function(t) {
+            var dueDate = t.due_date ? t.due_date.substring(0, 16).replace('T', ' ') : '—';
+            html += '<tr data-id="' + t.id + '">'
+                + '<td>' + t.batch_number + '</td>'
+                + '<td>' + t.product + '</td>'
+                + '<td>' + t.task_type + '</td>'
+                + '<td>' + dueDate + '</td>'
+                + '<td><span class="status-badge ' + (statusClasses[t.status_raw] || '') + '">' + t.status + '</span></td>'
+                + '<td><button class="btn btn-success" onclick="openTaskForm(' + t.id + ", '" + t.batch_number + "', '" + t.product + "', " + t.ebr_id + ')">Выполнить</button></td>'
+                + '</tr>';
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    })
+    .catch(function(err) { console.error('QC tasks error:', err); });
+}
+
+// Закрытие модального окна при клике вне его
+window.onclick = function(event) {
+    var modal = document.getElementById('task-modal');
+    if (event.target === modal) closeTaskModal();
+};
 </script>
 {% endblock %}

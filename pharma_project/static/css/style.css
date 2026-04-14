@@ -191,6 +191,9 @@
         .indicator-yellow {
             background-color: var(--warning-color);
         }
+        .indicator-orange {
+            background-color: #f39c12; /* Отклонение */
+        }
         .indicator-red {
             background-color: var(--danger-color);
         }

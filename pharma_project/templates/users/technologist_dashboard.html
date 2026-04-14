@@ -1,205 +1,327 @@
 {% extends 'base.html' %}
 
+{% block title %}Панель технолога{% endblock %}
+
 {% block content %}
-<h1>Панель технолога</h1>
+<div class="interface-section">
+    <h1>Панель технолога</h1>
 
-<div class="nav-tabs">
-    <div class="nav-tab active" data-tab="batch-start">Запуск партии</div>
-    <div class="nav-tab" data-tab="batch-monitor">Мониторинг партий</div>
-</div>
-
-<!-- Вкладка 1: Запуск партии -->
-<div class="tab-content active" id="batch-start-tab">
-    <h3>Запуск новой производственной партии</h3>
-
-    <div class="search-box">
-        <input type="text" id="product-search" placeholder="Код продукта">
-        <button onclick="searchProducts()">Найти</button>
+    <div class="nav-tabs">
+        <div class="nav-tab active" data-tab="batch-start">Запуск партии</div>
+        <div class="nav-tab" data-tab="batch-monitor">Мониторинг партий</div>
     </div>
 
-    <table>
-        <thead>
-            <tr>
-                <th>Код продукта</th>
-                <th>Наименование</th>
-                <th>Версия MBR</th>
-                <th>Действия</th>
-            </tr>
-        </thead>
-        <tbody id="approved-mbrs-table">
-            {% for mbr in approved_mbrs %}
-            <tr>
-                <td>{{ mbr.product.product_code }}</td>
-                <td>{{ mbr.product.product_name }}</td>
-                <td>{{ mbr.version }}</td>
-                <td>
-                    <button class="btn-success" onclick="startBatch({{ mbr.document_id }})">Запустить партию</button>
-                </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="4">Нет утверждённых MBR</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
+    <!-- Вкладка 1: Запуск партии -->
+    <div class="tab-content active" id="batch-start-tab">
+        <h3>Запуск новой производственной партии</h3>
+        <div class="search-box">
+            <input type="text" id="product-search" placeholder="Код продукта...">
+            <button onclick="searchProducts()">Найти</button>
+        </div>
 
-<!-- Вкладка 2: Мониторинг партий -->
-<div class="tab-content" id="batch-monitor-tab">
-    <h3>Мониторинг производственных партий</h3>
+        <table id="mbr-table">
+            <thead>
+                <tr>
+                    <th>Код продукта</th>
+                    <th>Наименование</th>
+                    <th>Версия MBR</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody id="approved-mbrs-table">
+                {% for mbr in approved_mbrs %}
+                <tr data-code="{{ mbr.product.product_code|lower }}">
+                    <td>{{ mbr.product.product_code }}</td>
+                    <td>{{ mbr.product.product_name }}</td>
+                    <td>{{ mbr.version }}</td>
+                    <td>
+                        <button class="btn btn-success" onclick="startBatch({{ mbr.document_id }})">Запустить партию</button>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="4">Нет утверждённых MBR</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 
-    <table>
-        <thead>
-            <tr>
-                <th>Номер партии</th>
-                <th>Продукт</th>
-                <th>Статус</th>
-                <th>Текущая операция</th>
-                <th>Прогресс</th>
-                <th>Действия</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for ebr in ebrs %}
-            <tr>
-                <td>{{ ebr.batch_number }}</td>
-                <td>{{ ebr.mbr.product.product_name }}</td>
-                <td>
-                    <span class="status-badge
-                        {% if ebr.status.status_name == 'В работе' %}status-active
-                        {% elif ebr.status.status_name == 'Завершена' %}status-approved
-                        {% elif ebr.status.status_name == 'Заблокирована' %}status-blocked
-                        {% endif %}">
-                        {{ ebr.status.status_name }}
-                    </span>
-                </td>
-                <td>
-                    {% with op=ebr.operations.last %}
-                        {{ op.operation_name|default:'—' }}
-                        {% if op.status == 'in_progress' %} (в процессе){% endif %}
-                    {% endwith %}
-                </td>
-                <td>
-                    {% if ebr.status.status_name == 'В работе' %}
-                        <div class="progress-bar">
-                            <div class="progress-fill" style="width: {{ ebr.progress|default:'25' }}%"></div>
-                        </div>
-                    {% endif %}
-                </td>
-                <td>
-                    <button class="action-btn" onclick="showEbrDetail({{ ebr.document_id }})">Просмотр</button>
-                </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="6">Нет партий</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <!-- Вкладка 2: Мониторинг -->
+    <div class="tab-content" id="batch-monitor-tab">
+        <h3>Мониторинг производственных партий</h3>
+        <p style="color: #7f8c8d; font-size: 14px;">Автообновление каждые 3 секунды</p>
+
+        <div id="monitoring-cards">
+            <!-- Карточки рендерятся через AJAX -->
+        </div>
+    </div>
 </div>
 
 <script>
 function searchProducts() {
-    const searchTerm = document.getElementById('product-search').value;
-    if (!searchTerm) {
-        location.reload();
-        return;
-    }
-
-    fetch(`/api/mbr/?search=${encodeURIComponent(searchTerm)}`)
-        .then(response => response.json())
-        .then(data => {
-            const tbody = document.getElementById('approved-mbrs-table');
-            tbody.innerHTML = '';
-            data.forEach(mbr => {
-                tbody.innerHTML += `
-                    <tr>
-                        <td>${mbr.product_code}</td>
-                        <td>${mbr.product_name}</td>
-                        <td>${mbr.version}</td>
-                        <td><button class="btn-success" onclick="startBatch(${mbr.id})">Запустить партию</button></td>
-                    </tr>
-                `;
-            });
-        });
+    const searchTerm = document.getElementById('product-search').value.toLowerCase();
+    const rows = document.querySelectorAll('#mbr-table tbody tr');
+    rows.forEach(row => {
+        const code = row.getAttribute('data-code');
+        row.style.display = (code && code.includes(searchTerm)) || !searchTerm ? '' : 'none';
+    });
 }
 
 function startBatch(mbrId) {
-    if (!mbrId || mbrId === 'None' || mbrId === 'undefined') {
-        alert('Ошибка: MBR не имеет идентификатора');
-        return;
-    }
-    
+    if (!mbrId) { alert('Ошибка: MBR не имеет идентификатора'); return; }
     if (confirm('Запустить производство партии?')) {
-        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
-        fetch(`/ebr/api/create/${mbrId}/`, {
+        const csrfToken = getCSRFToken();
+        fetch('/ebr/api/create/' + mbrId + '/', {
             method: 'POST',
+            credentials: 'same-origin',
             headers: {
                 'X-Requested-With': 'XMLHttpRequest',
-                'X-CSRFToken': csrfToken
+                'X-CSRFToken': csrfToken,
+                'Content-Type': 'application/json'
             }
         })
-        .then(response => {
-            if (response.status === 302) {
-                // Редирект — перезагружаем страницу
-                location.reload();
-                return;
-            }
-            return response.json();
+        .then(function(r) {
+            if (r.status === 302 || r.status === 401) { location.reload(); return null; }
+            return r.json();
         })
-        .then(data => {
+        .then(function(data) {
             if (data && data.success) {
-                alert(`Партия ${data.batch_number} создана`);
+                alert('Партия ' + data.batch_number + ' создана и ожидает оператора');
                 location.reload();
             } else if (data && data.error) {
                 alert('Ошибка: ' + data.error);
             }
         })
-        .catch(error => {
-            console.error('Start batch error:', error);
-            // При редиректе это нормально
-            location.reload();
+        .catch(function() { location.reload(); });
+    }
+}
+
+function getCSRFToken() {
+    var csrfInput = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (csrfInput) return csrfInput.value;
+    var cookies = document.cookie.split(';');
+    for (var i = 0; i < cookies.length; i++) {
+        var c = cookies[i].trim();
+        if (c.indexOf('csrftoken=') === 0) return c.substring(10);
+    }
+    return '';
+}
+
+// Хранилище таймеров обратного отсчёта
+var countdownTimers = {};
+
+// Рендеринг карточек мониторинга через AJAX
+function refreshMonitoring() {
+    fetch('/api/technologist/monitoring/', { credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success || !data.ebrs) return;
+
+            var container = document.getElementById('monitoring-cards');
+            if (!container) return;
+
+            var existingIds = new Set();
+            data.ebrs.forEach(function(ebr) {
+                existingIds.add(ebr.document_id);
+                var borderColors = {
+                    'critical': '#e74c3c',
+                    'deviation': '#f39c12',
+                    'warning': '#27ae60'
+                };
+                var borderColor = borderColors[ebr.worst_status] || '#95a5a6';
+
+                var statusIcon = ebr.status === 'В ожидании' ? '⏳ В ожидании' : '🔄 В работе';
+
+                var statusColors = {
+                    'critical': '#e74c3c',
+                    'deviation': '#f39c12',
+                    'warning': '#27ae60',
+                    'ok': '#95a5a6'
+                };
+
+                var html = '<div class="card ebr-monitor-card" id="ebr-card-' + ebr.document_id + '" style="margin-bottom:15px;border-left:4px solid ' + borderColor + ';">';
+                // Шапка
+                html += '<div style="padding:12px 15px;background:#f8f9fa;border-bottom:1px solid #e9ecef;">';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+                html += '<div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;">';
+                html += '<div><span style="color:#7f8c8d;font-size:12px;">Партия</span><br><strong style="font-size:15px;">' + ebr.batch_number + '</strong></div>';
+                html += '<div><span style="color:#7f8c8d;font-size:12px;">Продукт</span><br><strong style="font-size:14px;">' + ebr.product + '</strong></div>';
+                html += '<div><span style="color:#7f8c8d;font-size:12px;">Статус</span><br><strong style="font-size:14px;">' + statusIcon + '</strong></div>';
+                html += '<div><span style="color:#7f8c8d;font-size:12px;">Этап</span><br><strong style="font-size:14px;" id="operation-label-' + ebr.document_id + '">' + ebr.operation_label + '</strong></div>';
+                if (ebr.operator) {
+                    html += '<div><span style="color:#7f8c8d;font-size:12px;">Оператор</span><br><strong style="font-size:14px;">' + ebr.operator + '</strong></div>';
+                }
+                html += '</div>';
+                html += '<a href="/ebr/' + ebr.document_id + '/" class="btn" style="padding:6px 14px;font-size:13px;white-space:nowrap;">Подробнее</a>';
+                html += '</div></div>';
+
+                // Если в ОКК — сокращённо
+                if (ebr.operation_label === 'Экспертиза в ОКК') {
+                    html += '<div style="padding:10px 15px;background:#e8f5e9;margin:5px 15px;border-radius:4px;color:#155724;">✅ Пресс завершил работу. Партия ожидает проверки ОКК.</div>';
+                } else {
+                    // Уведомление об отправке в ОКК
+                    if (ebr.just_finished) {
+                        html += '<div style="background:#d1ecf1;color:#0c5460;padding:10px 15px;border-left:4px solid #17a2b8;margin:5px 15px;border-radius:4px;">📢 <strong>Партия ' + ebr.batch_number + ' отправлена на экспертизу в ОКК</strong></div>';
+                    }
+
+                    // Таймер пресса
+                    if (ebr.pressing_started && ebr.press_still_running) {
+                        html += '<div style="background:#e8f5e9;padding:8px 15px;margin:5px 15px;border-radius:4px;border-left:4px solid #28a745;">⏱ Пресс работает: <strong id="countdown-' + ebr.document_id + '" style="font-family:monospace;font-size:16px;">' + ebr.press_remaining + ' сек</strong></div>';
+
+                        // Обратный отсчёт
+                        if (!countdownTimers[ebr.document_id]) {
+                            (function(ebrId, initial) {
+                                var rem = initial;
+                                countdownTimers[ebrId] = setInterval(function() {
+                                    rem--;
+                                    var el = document.getElementById('countdown-' + ebrId);
+                                    if (rem <= 0) {
+                                        clearInterval(countdownTimers[ebrId]);
+                                        delete countdownTimers[ebrId];
+                                        if (el) {
+                                            el.parentElement.innerHTML = '✅ Пресс завершил работу — партия отправлена в ОКК';
+                                            el.parentElement.style.background = '#d1ecf1';
+                                            el.parentElement.style.color = '#0c5460';
+                                        }
+                                        var opEl = document.getElementById('operation-label-' + ebrId);
+                                        if (opEl) opEl.textContent = 'Экспертиза в ОКК';
+                                        refreshMonitoring();
+                                        return;
+                                    }
+                                    if (el) el.textContent = rem + ' сек';
+                                }, 1000);
+                            })(ebr.document_id, ebr.press_remaining);
+                        }
+                    }
+
+                    // Таблица параметров (только если не в ОКК)
+                    html += '<div style="padding:10px 15px;"><table style="width:100%;"><thead><tr>';
+                    html += '<th>Параметр</th><th>Номинальное</th><th>Фактическое</th><th>Максимум</th><th>Допуск</th><th>Критическое</th><th>Статус</th>';
+                    html += '</tr></thead><tbody id="params-tbody-' + ebr.document_id + '">';
+                    var worstParam = 'ok';
+                    ebr.parameters.forEach(function(p) {
+                        var statusHtml = '';
+                        if (p.status === 'critical') {
+                            statusHtml = '<span style="color:#e74c3c;font-weight:bold;">⛔ Критическое</span>';
+                            worstParam = 'critical';
+                        } else if (p.status === 'deviation') {
+                            statusHtml = '<span style="color:#f39c12;font-weight:bold;">⚠️ Отклонение</span>';
+                            if (worstParam !== 'critical') worstParam = 'deviation';
+                        } else if (p.status === 'warning') {
+                            statusHtml = '<span style="color:#27ae60;">🔶 Предупреждение</span>';
+                            if (['critical','deviation'].indexOf(worstParam) === -1) worstParam = 'warning';
+                        } else if (p.status === 'pending') {
+                            statusHtml = '<span style="color:#95a5a6;">Ожидает</span>';
+                        } else {
+                            statusHtml = '<span style="color:#2a83bd;">✅ Норма</span>';
+                        }
+                        var maxVal = p.max_value !== null ? p.max_value : '—';
+                        html += '<tr><td>' + p.name + ' (' + p.unit + ')</td><td>' + p.nominal + '</td><td>' + (p.actual !== null ? p.actual : '—') + '</td><td>' + maxVal + '</td><td>±' + p.tolerance + '</td><td>±' + p.critical + '</td><td>' + statusHtml + '</td></tr>';
+                    });
+                    html += '</tbody></table></div>';
+                }
+
+                html += '</div>';
+
+                // Вставляем или обновляем карточку
+                var existing = document.getElementById('ebr-card-' + ebr.document_id);
+                if (existing) {
+                    existing.outerHTML = html;
+                } else {
+                    container.insertAdjacentHTML('beforeend', html);
+                }
+            });
+
+            // Удаляем карточки, которых больше нет в ответе
+            var cards = container.querySelectorAll('.ebr-monitor-card');
+            cards.forEach(function(card) {
+                var cardId = parseInt(card.id.replace('ebr-card-', ''));
+                if (!existingIds.has(cardId)) {
+                    if (countdownTimers[cardId]) {
+                        clearInterval(countdownTimers[cardId]);
+                        delete countdownTimers[cardId];
+                    }
+                    card.remove();
+                }
+            });
+        })
+        .catch(function(err) { console.error('Monitoring error:', err); });
+}
+
+// Запускаем мониторинг при загрузке, если активна вкладка
+(function() {
+    var tab = document.querySelector('[data-tab="batch-monitor"]');
+    if (tab && tab.classList.contains('active')) {
+        refreshMonitoring();
+    }
+    setInterval(function() {
+        var t = document.querySelector('[data-tab="batch-monitor"]');
+        if (t && t.classList.contains('active')) refreshMonitoring();
+    }, 3000);
+})();
+
+// Вкладки — сохранение активной вкладки через localStorage
+(function() {
+    var savedTab = localStorage.getItem('technologist-active-tab');
+    if (savedTab) {
+        var tabEl = document.querySelector('.nav-tab[data-tab="' + savedTab + '"]');
+        if (tabEl) {
+            document.querySelectorAll('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
+            document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+            tabEl.classList.add('active');
+            var content = document.getElementById(savedTab + '-tab');
+            if (content) content.classList.add('active');
+        }
+    }
+    document.querySelectorAll('.nav-tab').forEach(function(tab) {
+        tab.addEventListener('click', function() {
+            document.querySelectorAll('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
+            this.classList.add('active');
+            document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+            document.getElementById(this.dataset.tab + '-tab').classList.add('active');
+            localStorage.setItem('technologist-active-tab', this.dataset.tab);
         });
-    }
-}
-
-function showEbrDetail(ebrId) {
-    window.location.href = `?ebr_detail=${ebrId}`;
-}
-
-// Автообновление мониторинга каждые 10 секунд
-setInterval(() => {
-    if (document.querySelector('[data-tab="batch-monitor"]').classList.contains('active')) {
-        location.reload();
-    }
-}, 10000);
-
-// Переключение вкладок
-document.querySelectorAll('.nav-tab').forEach(tab => {
-    tab.addEventListener('click', function() {
-        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-        this.classList.add('active');
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.getElementById(this.dataset.tab + '-tab').classList.add('active');
     });
-});
+})();
+
+// AJAX-обновление списка утверждённых MBR
+(function() {
+    var lastCount = -1;
+    setInterval(function() {
+        var tab = document.querySelector('[data-tab="batch-start"]');
+        if (!tab || !tab.classList.contains('active')) return;
+
+        fetch('/api/technologist/approved-mbrs/', { credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success) return;
+
+            var tbody = document.getElementById('approved-mbrs-table');
+            if (!tbody) return;
+
+            var mbrs = data.approved_mbrs;
+            if (mbrs.length === lastCount) return;
+            lastCount = mbrs.length;
+
+            if (mbrs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4">Нет утверждённых MBR</td></tr>';
+                return;
+            }
+
+            var html = '';
+            mbrs.forEach(function(mbr) {
+                html += '<tr data-code="' + mbr.product_code.toLowerCase() + '"><td>' + mbr.product_code + '</td><td>' + mbr.product_name + '</td><td>' + mbr.version + '</td><td><button class="btn btn-success" onclick="startBatch(' + mbr.document_id + ')">Запустить партию</button></td></tr>';
+            });
+            tbody.innerHTML = html;
+        })
+        .catch(function(err) { console.error('Approved MBRs error:', err); });
+    }, 3000);
+})();
 </script>
 
 <style>
-.progress-bar {
-    width: 100px;
-    height: 10px;
-    background-color: #ecf0f1;
-    border-radius: 5px;
-    overflow: hidden;
-}
-
-.progress-fill {
-    height: 100%;
-    background-color: var(--success-color);
-    transition: width 0.3s;
-}
+.status-waiting { background: #95a5a6; color: white; padding: 4px 10px; border-radius: 4px; font-size: 13px; }
+.status-active { background: #27ae60; color: white; padding: 4px 10px; border-radius: 4px; font-size: 13px; }
+.status-approved { background: #219854; color: white; padding: 4px 10px; border-radius: 4px; font-size: 13px; }
+.status-blocked { background: #e74c3c; color: white; padding: 4px 10px; border-radius: 4px; font-size: 13px; }
 </style>
 {% endblock %}

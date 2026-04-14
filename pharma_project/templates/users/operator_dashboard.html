@@ -1,184 +1,365 @@
 {% extends 'base.html' %}
 
+{% block title %}Панель оператора{% endblock %}
+
 {% block content %}
-<h1>Панель оператора цеха</h1>
+<div class="interface-section">
+    <h1>Панель оператора цеха</h1>
 
-<div class="alert alert-warning">
-    У вас есть {{ active_tasks|length }} активных заданий
-</div>
-
-<div class="nav-tabs">
-    <div class="nav-tab active" data-tab="tasks">Задания</div>
-    <div class="nav-tab" data-tab="current-batch">Текущая партия</div>
-</div>
-
-<!-- Вкладка 1: Список заданий -->
-<div class="tab-content active" id="tasks-tab">
-    <h3>Текущие задания</h3>
-
-    <table>
-        <thead>
-            <tr>
-                <th>Номер партии</th>
-                <th>Продукт</th>
-                <th>Операция</th>
-                <th>Сырьё</th>
-                <th>Статус</th>
-                <th>Действия</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for task in active_tasks %}
-            <tr>
-                <td>{{ task.ebr.batch_number }}</td>
-                <td>{{ task.ebr.mbr.product.product_name }}</td>
-                <td>{{ task.operation_name }}</td>
-                <td>
-                    <ul style="margin: 0; padding-left: 20px;">
-                        {% for material in task.ebr.mbr.raw_materials.all %}
-                        <li>{{ material.material_name }}</li>
-                        {% endfor %}
-                    </ul>
-                </td>
-                <td>
-                    <span class="indicator
-                        {% if task.status == 'in_progress' %}indicator-yellow
-                        {% elif task.status == 'completed' %}indicator-green
-                        {% else %}indicator-gray{% endif %}">
-                    </span>
-                    {% if task.status == 'pending' %}Ожидает
-                    {% elif task.status == 'in_progress' %}В процессе
-                    {% elif task.status == 'completed' %}Завершено
-                    {% endif %}
-                </td>
-                <td>
-                    {% if task.status == 'pending' %}
-                        <button class="action-btn success" onclick="startOperation({{ task.id }})">Начать</button>
-                    {% elif task.status == 'in_progress' %}
-                        <button class="action-btn success" onclick="completeOperation({{ task.id }})">Завершить</button>
-                    {% endif %}
-                </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="6">Нет активных заданий</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-
-<!-- Вкладка 2: Текущая партия -->
-<div class="tab-content" id="current-batch-tab">
-    {% with current=active_tasks.first %}
-    {% if current %}
-    <h3>Партия: {{ current.ebr.batch_number }}</h3>
-
-    <div class="card">
-        <h4>Информация о партии</h4>
-        <p><strong>Продукт:</strong> {{ current.ebr.mbr.product.product_name }}</p>
-        <p><strong>Текущая операция:</strong> {{ current.operation_name }}</p>
-        <p><strong>Статус:</strong> {{ current.status }}</p>
+    <div class="nav-tabs">
+        <div class="nav-tab active" data-tab="waiting">⏳ Ожидают оператора</div>
+        <div class="nav-tab" data-tab="active">🔄 Мои партии</div>
     </div>
 
-    <div class="card">
-        <h4>Сырьё</h4>
-        <ul>
-            {% for material in current.ebr.mbr.raw_materials.all %}
-            <li>{{ material.material_name }}</li>
-            {% endfor %}
-        </ul>
-    </div>
-
-    <div class="card">
-        <h4>Параметры процесса</h4>
+    <!-- Вкладка 1: Ожидают оператора (где operator IS NULL) -->
+    <div class="tab-content active" id="waiting-tab">
+        <div id="waiting-list-container">
+        {% if waiting_ebrs %}
         <table>
             <thead>
                 <tr>
-                    <th>Параметр</th>
-                    <th>Целевое</th>
-                    <th>Текущее</th>
-                    <th>Статус</th>
+                    <th>Номер партии</th>
+                    <th>Продукт</th>
+                    <th>Дата создания</th>
+                    <th>Действие</th>
                 </tr>
             </thead>
-            <tbody>
-                {% for param in current.ebr.ebrparameter_set.all %}
+            <tbody id="waiting-tbody">
+                {% for ebr in waiting_ebrs %}
                 <tr>
-                    <td>{{ param.parameter.parameter_name }}</td>
-                    <td>{{ param.parameter.value }} {{ param.parameter.unit }}</td>
+                    <td>{{ ebr.batch_number }}</td>
+                    <td>{{ ebr.mbr.product.product_name }}</td>
+                    <td>{{ ebr.start_date|date:"d.m.Y H:i" }}</td>
                     <td>
-                        {% if param.actual_value %}
-                            {{ param.actual_value }} {{ param.parameter.unit }}
-                        {% else %}
-                            <span class="indicator indicator-yellow"></span> Ожидает
-                        {% endif %}
-                    </td>
-                    <td>
-                        {% if param.actual_value %}
-                            {% with diff=param.actual_value|add:"-"|add:param.parameter.value %}
-                                {% if diff < param.parameter.tolerance %}
-                                    <span class="indicator indicator-green"></span> Норма
-                                {% else %}
-                                    <span class="indicator indicator-red"></span> Отклонение
-                                {% endif %}
-                            {% endwith %}
-                        {% else %}
-                            —
-                        {% endif %}
+                        <button class="btn btn-success" onclick="startProduction({{ ebr.document_id }})">Начать производство</button>
                     </td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
+        {% else %}
+        <p style="color: #7f8c8d; text-align: center; padding: 20px;">Нет партий, ожидающих оператора</p>
+        {% endif %}
+        </div>
     </div>
 
-    <div class="form-group">
-        <label>Комментарий оператора</label>
-        <textarea id="operator-comment" rows="3" placeholder="Введите комментарий к операции"></textarea>
+    <!-- Вкладка 2: Мои активные партии -->
+    <div class="tab-content" id="active-tab">
+        {% if active_parties %}
+        {% for task in active_parties %}
+        {% with ebr=task.ebr pressing_started=task.ebr.pressing_started press_still_running=task.ebr.press_still_running press_remaining=task.ebr.press_remaining %}
+        <div class="card" id="party-card-{{ ebr.document_id }}" style="margin-bottom: 15px; border-left: 4px solid {% if ebr.status.status_name == 'Заблокирована' %}#e74c3c{% elif ebr.status.status_name == 'Завершена' %}#219854{% else %}#27ae60{% endif %};">
+            <h4>Партия: {{ ebr.batch_number }} — {{ ebr.mbr.product.product_name }}</h4>
+
+            <!-- Текущая операция -->
+            <div style="margin-bottom: 15px;">
+                <strong>Этап:</strong> <span id="operation-label-{{ ebr.document_id }}">{{ ebr.current_operation_label }}</span>
+            </div>
+
+            <!-- Обратный отсчёт пресса -->
+            {% if pressing_started and press_still_running %}
+            <div class="card" style="background: #e8f5e9; border-left: 4px solid #219854; margin: 10px 0;">
+                <h4>⏱ Пресс работает</h4>
+                <div style="font-size: 28px; font-weight: bold; color: #155724; font-family: monospace;" id="countdown-{{ ebr.document_id }}">
+                    {{ press_remaining }} сек
+                </div>
+                <div style="color: #6c757d; font-size: 13px;">Осталось времени прессования</div>
+            </div>
+            {% elif pressing_started and not press_still_running %}
+            <div class="card" style="background: #d1ecf1; border-left: 4px solid #17a2b8; margin: 10px 0;">
+                <h4>✅ Пресс завершил работу</h4>
+                <p style="color: #0c5460;">Партия отправлена на экспертизу в ОКК.</p>
+            </div>
+            {% endif %}
+
+            <!-- Кнопка: Подтвердить выбор сырья -->
+            {% if task.operation_name == 'Выбор сырья' and task.status == 'in_progress' %}
+            <h4>Сырьё для партии:</h4>
+            <ul>
+                {% for material in ebr.mbr.raw_materials.all %}
+                <li>{{ material.material_name }}</li>
+                {% endfor %}
+            </ul>
+            <button class="btn btn-success" onclick="confirmTask({{ task.id }}, {{ ebr.document_id }})">
+                Подтвердить выбор сырья
+            </button>
+            {% endif %}
+
+            <!-- Кнопка: Запустить пресс -->
+            {% if task.operation_name == 'Работа пресса' and task.status == 'in_progress' and not pressing_started %}
+            <div style="margin: 15px 0;">
+                <label>Время прессования (сек): </label>
+                <input type="number" id="pressing-time-{{ ebr.document_id }}" min="30" max="300" step="1" value="30" style="width: 80px;">
+                <button class="btn btn-success" onclick="startPressing({{ task.id }}, {{ ebr.document_id }})">Запустить пресс</button>
+            </div>
+            {% endif %}
+
+            <!-- Параметры процесса -->
+            {% if pressing_started and press_still_running %}
+            <div id="params-container-{{ ebr.document_id }}">
+            <h4>Параметры процесса:</h4>
+            <table class="params-monitor-table" data-ebr-id="{{ ebr.document_id }}">
+                <thead>
+                    <tr>
+                        <th>Параметр</th>
+                        <th>Номинальное</th>
+                        <th>Фактическое</th>
+                        <th>Максимум</th>
+                        <th>Статус</th>
+                    </tr>
+                </thead>
+                <tbody class="params-tbody">
+                    {% for p in ebr.params %}
+                    <tr>
+                        <td>{{ p.name }} ({{ p.unit }})</td>
+                        <td>{{ p.nominal }}</td>
+                        <td class="actual-cell">{{ p.actual|default:"—" }}</td>
+                        <td class="max-cell">{{ p.max_value|default:"—" }}</td>
+                        <td class="status-cell">
+                            {% if p.status == 'critical' %}
+                                <span class="indicator indicator-red"></span> Критическое
+                            {% elif p.status == 'deviation' %}
+                                <span class="indicator indicator-orange"></span> Отклонение
+                            {% elif p.status == 'warning' %}
+                                <span class="indicator indicator-yellow"></span> Предупреждение
+                            {% elif p.status == 'pending' %}
+                                <span class="indicator indicator-gray"></span> Ожидает
+                            {% else %}
+                                <span class="indicator indicator-green"></span> Норма
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% endif %}
+
+            <!-- Последние показания оборудования -->
+            {% if pressing_started and press_still_running and ebr.latest_readings %}
+            <h4 style="margin-top: 15px;">Последние показания оборудования:</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Время</th>
+                        <th>Усилие (кН)</th>
+                        <th>Толщина (мм)</th>
+                        <th>Масса (мг)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in ebr.latest_readings %}
+                    <tr>
+                        <td>{{ r.timestamp|date:"d.m.Y H:i:s" }}</td>
+                        <td>{{ r.pressure_force }}</td>
+                        <td>{{ r.tablet_thickness }}</td>
+                        <td>{{ r.tablet_weight }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+        </div>
+        {% endwith %}
+        {% endfor %}
+        {% else %}
+        <p style="color: #7f8c8d; text-align: center; padding: 20px;">Нет активных партий</p>
+        {% endif %}
     </div>
-
-    {% if current.status == 'in_progress' %}
-    <button class="btn-success" onclick="completeOperation({{ current.id }})">
-        Подтвердить завершение операции
-    </button>
-    {% endif %}
-
-    {% else %}
-    <p>Нет активной партии</p>
-    {% endif %}
-    {% endwith %}
 </div>
 
 <script>
-function startOperation(taskId) {
-    fetch(`/api/operation/${taskId}/start/`, { method: 'POST' })
-        .then(() => location.reload());
-}
-
-function completeOperation(taskId) {
-    const comment = document.getElementById('operator-comment')?.value || '';
-    fetch(`/api/operation/${taskId}/complete/`, {
+// Начать производство (AJAX)
+function startProduction(ebrId) {
+    if (!confirm('Начать производство партии?')) return;
+    var csrfToken = getCSRFToken();
+    fetch('/ebr/' + ebrId + '/start/', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comment: comment })
-    }).then(() => location.reload());
+        credentials: 'same-origin',
+        headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrfToken }
+    })
+    .then(function(r) {
+        if (r.status === 302 || r.status === 401) { location.reload(); return null; }
+        return r.json();
+    })
+    .then(function(data) {
+        if (data && data.success) { location.reload(); }
+        else if (data && data.error) { alert('Ошибка: ' + data.error); }
+    })
+    .catch(function() { location.reload(); });
 }
 
-// Переключение вкладок
-document.querySelectorAll('.nav-tab').forEach(tab => {
-    tab.addEventListener('click', function() {
-        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-        this.classList.add('active');
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.getElementById(this.dataset.tab + '-tab').classList.add('active');
-    });
-});
+// Подтвердить операцию (AJAX)
+function confirmTask(taskId, ebrId) {
+    var csrfToken = getCSRFToken();
+    fetch('/ebr/' + taskId + '/complete-operation/', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrfToken }
+    })
+    .then(function(r) {
+        if (r.status === 302 || r.status === 401) { location.reload(); return null; }
+        return r.json();
+    })
+    .then(function(data) { location.reload(); })
+    .catch(function() { location.reload(); });
+}
 
-// Автообновление каждые 5 секунд
-setInterval(() => {
-    if (document.querySelector('[data-tab="current-batch"]').classList.contains('active')) {
-        location.reload();
+// Запустить пресс (AJAX)
+function startPressing(taskId, ebrId) {
+    var timeInput = document.getElementById('pressing-time-' + ebrId);
+    var pressingTime = parseInt(timeInput.value);
+    if (isNaN(pressingTime) || pressingTime < 30 || pressingTime > 300) {
+        alert('Время прессования должно быть целым числом от 30 до 300 секунд');
+        return;
     }
-}, 5000);
+    var formData = new FormData();
+    formData.append('pressing_time', pressingTime);
+    formData.append('csrfmiddlewaretoken', getCSRFToken());
+    fetch('/ebr/' + ebrId + '/start-pressing/', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: formData,
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data && data.success) {
+            alert('Пресс запущен на ' + pressingTime + ' сек.');
+            location.reload();
+        } else {
+            alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+        }
+    })
+    .catch(function(err) { alert('Ошибка запуска пресса'); console.error(err); });
+}
+
+function getCSRFToken() {
+    var csrfInput = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (csrfInput) return csrfInput.value;
+    var cookies = document.cookie.split(';');
+    for (var i = 0; i < cookies.length; i++) {
+        var c = cookies[i].trim();
+        if (c.indexOf('csrftoken=') === 0) return c.substring(10);
+    }
+    return '';
+}
+
+// Обратный отсчёт для каждой активной партии
+{% for task in active_parties %}
+{% if task.ebr.press_still_running and task.ebr.press_remaining > 0 %}
+(function() {
+    var ebrId = {{ task.ebr.document_id }};
+    var remaining = {{ task.ebr.press_remaining }};
+    var countdownEl = document.getElementById('countdown-' + ebrId);
+
+    setInterval(function() {
+        remaining--;
+        if (remaining <= 0) {
+            if (countdownEl) {
+                countdownEl.innerHTML = '✅ Пресс завершил работу';
+                countdownEl.style.color = '#28a745';
+            }
+            // Обновляем метку операции
+            var opLabel = document.getElementById('operation-label-' + ebrId);
+            if (opLabel) opLabel.textContent = 'Экспертиза в ОКК';
+            location.reload();
+            return;
+        }
+        if (countdownEl) countdownEl.textContent = remaining + ' сек';
+    }, 1000);
+})();
+{% endif %}
+{% endfor %}
+
+// Вкладки — сохранение активной вкладки через localStorage
+(function() {
+    // Восстанавливаем сохранённую вкладку
+    var savedTab = localStorage.getItem('operator-active-tab');
+    if (savedTab) {
+        var tabEl = document.querySelector('.nav-tab[data-tab="' + savedTab + '"]');
+        if (tabEl) {
+            document.querySelectorAll('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
+            document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+            tabEl.classList.add('active');
+            var content = document.getElementById(savedTab + '-tab');
+            if (content) content.classList.add('active');
+        }
+    }
+
+    // Сохраняем при клике
+    document.querySelectorAll('.nav-tab').forEach(function(tab) {
+        tab.addEventListener('click', function() {
+            document.querySelectorAll('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
+            this.classList.add('active');
+            document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+            document.getElementById(this.dataset.tab + '-tab').classList.add('active');
+            localStorage.setItem('operator-active-tab', this.dataset.tab);
+        });
+    });
+})();
+
+// AJAX-обновление списка ожидающих партий
+(function() {
+    var lastCount = -1;
+    setInterval(function() {
+        // Обновляем только если активна вкладка "Ожидают"
+        var waitingTab = document.querySelector('[data-tab="waiting"]');
+        if (!waitingTab || !waitingTab.classList.contains('active')) return;
+
+        fetch('/api/operator/waiting-list/', { credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success) return;
+
+            var container = document.getElementById('waiting-list-container');
+            if (!container) return;
+
+            var ebrs = data.waiting_ebrs;
+            // Обновляем только если количество изменилось
+            if (ebrs.length === lastCount) return;
+            lastCount = ebrs.length;
+
+            if (ebrs.length === 0) {
+                container.innerHTML = '<p style="color: #7f8c8d; text-align: center; padding: 20px;">Нет партий, ожидающих оператора</p>';
+                return;
+            }
+
+            var html = '<table><thead><tr><th>Номер партии</th><th>Продукт</th><th>Дата создания</th><th>Действие</th></tr></thead><tbody id="waiting-tbody">';
+            ebrs.forEach(function(ebr) {
+                html += '<tr><td>' + ebr.batch_number + '</td><td>' + ebr.product + '</td><td>' + (ebr.start_date ? ebr.start_date.substring(0, 16).replace('T', ' ') : '—') + '</td><td><button class="btn btn-success" onclick="startProduction(' + ebr.document_id + ')">Начать производство</button></td></tr>';
+            });
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        })
+        .catch(function(err) { console.error('Waiting list error:', err); });
+    }, 3000);
+})();
+</script>
+
+<!-- AJAX-обновление вкладки "Мои партии" каждые 5 сек -->
+<script>
+(function() {
+    var lastActiveCount = -1;
+    setInterval(function() {
+        var activeTab = document.querySelector('[data-tab="active"]');
+        if (!activeTab || !activeTab.classList.contains('active')) return;
+
+        // Делаем простой запрос на сервер для проверки изменений
+        // Используем существующий endpoint мониторинга для проверки
+        fetch('/api/operator/waiting-list/', { credentials: 'same-origin' })
+        .then(function() {
+            // Проверяем, изменилось ли количество активных партий
+            // Для этого считаем карточки на странице
+            var cards = document.querySelectorAll('#active-tab .card');
+            var currentCount = cards.length;
+            if (currentCount !== lastActiveCount && lastActiveCount !== -1) {
+                location.reload();
+            }
+            lastActiveCount = currentCount;
+        })
+        .catch(function() {});
+    }, 5000);
+})();
 </script>
 {% endblock %}

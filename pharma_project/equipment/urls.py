@@ -7,5 +7,6 @@ urlpatterns = [
     path('api/machines/', views.get_machines, name='get_machines'),
     path('api/machine/<int:machine_id>/simulate/', views.simulate_reading, name='simulate_reading'),
     path('api/machine/<int:machine_id>/send/', views.send_reading, name='send_reading'),
+    path('api/machine/<int:machine_id>/send-for-batch/', views.send_for_batch, name='send_for_batch'),
     path('api/readings/', views.latest_readings, name='latest_readings'),
 ]

@@ -21,7 +21,7 @@
             <tr>
                 <td>{{ signature.signature_date|date:"d.m.Y H:i:s" }}</td>
                 <td>{{ signature.user.get_full_name }}</td>
-                <td>Документ #{{ signature.document.document_id }} ({{ signature.document.type.type_name }})</td>
+                <td>Документ #{{ signature.document.pk }} ({{ signature.document.type.type_name }})</td>
                 <td style="font-family: monospace; font-size: 0.85rem;">{{ signature.signature_hash|truncatechars:30 }}</td>
                 <td>{{ signature.comment|default:"—" }}</td>
             </tr>

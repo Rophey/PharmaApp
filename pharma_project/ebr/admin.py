@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import EBRStatus, EBR, EBRParameter, BatchOperation
+from .models import EBRStatus, EBR, EBRNominalParameter, EBRActualParameter, BatchOperation
 
 
 @admin.register(EBRStatus)
@@ -28,10 +28,16 @@ class EBRAdmin(admin.ModelAdmin):
     )
 
 
-@admin.register(EBRParameter)
-class EBRParameterAdmin(admin.ModelAdmin):
-    list_display = ('pk', 'ebr', 'parameter', 'actual_value')
-    list_filter = ('ebr__status',)
+@admin.register(EBRNominalParameter)
+class EBRNominalParameterAdmin(admin.ModelAdmin):
+    list_display = ('pk', 'ebr', 'parameter', 'nominal_value', 'tolerance_value', 'critical_value')
+    list_filter = ('parameter', 'ebr__status')
+
+
+@admin.register(EBRActualParameter)
+class EBRActualParameterAdmin(admin.ModelAdmin):
+    list_display = ('pk', 'ebr', 'parameter', 'actual_value', 'max_value', 'source')
+    list_filter = ('parameter', 'source', 'ebr__status')
 
 
 @admin.register(BatchOperation)

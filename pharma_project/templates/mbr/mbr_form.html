@@ -127,9 +127,6 @@
 
         <div style="margin-top: 20px;">
             <button type="submit" class="btn btn-primary">Сохранить</button>
-            {% if mbr and mbr.status.status_name == 'Черновик' %}
-                <button type="button" class="btn btn-success" onclick="approveMBR()">Утвердить</button>
-            {% endif %}
             <a href="{% url 'mbr:mbr_list' %}" class="btn">Отмена</a>
         </div>
     </form>
@@ -223,18 +220,6 @@ document.getElementById('mbr-form').addEventListener('submit', function(e) {
         alert('Внесённая информация не является полной или содержит ошибки');
     }
 });
-
-function approveMBR() {
-    if (!validateMBRForm()) {
-        alert('Внесённая информация не является полной или содержит ошибки');
-        return;
-    }
-    if (confirm('Вы уверены, что хотите утвердить MBR?')) {
-        const form = document.getElementById('mbr-form');
-        form.action = "{% url 'mbr:mbr_approve' mbr.document_id %}";
-        form.submit();
-    }
-}
 
 function searchRawMaterials() {
     const searchTerm = document.getElementById('raw-material-search').value.toLowerCase();

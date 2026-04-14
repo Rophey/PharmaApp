@@ -26,4 +26,16 @@ urlpatterns = [
     path('api/mbr/<int:mbr_id>/edit/', views.get_mbr_for_edit, name='api_mbr_edit'),
     path('api/mbr/<int:mbr_id>/update/', views.update_mbr, name='api_mbr_update'),
     path('api/mbr/<int:mbr_id>/approve/', views.approve_mbr_api, name='api_mbr_approve'),
+    path('api/ebr/<int:ebr_id>/monitoring/', views.ebr_monitoring_api, name='api_ebr_monitoring'),
+    path('api/technologist/monitoring/', views.technologist_monitoring_api, name='api_technologist_monitoring'),
+    path('api/operator/waiting-list/', views.operator_waiting_list_api, name='api_operator_waiting_list'),
+    path('api/technologist/approved-mbrs/', views.technologist_approved_mbrs_api, name='api_technologist_approved_mbrs'),
+    path('api/qc/tasks/', views.qc_tasks_api, name='api_qc_tasks'),
+    path('api/qc/submit/<int:task_id>/', views.qc_submit_results, name='api_qc_submit'),
+    path('api/qc-chief/archive/', views.qc_chief_archive_api, name='api_qc_chief_archive'),
+    path('api/qc-chief/pending/', views.qc_chief_pending_api, name='api_qc_chief_pending'),
+    path('ebr/<int:pk>/reject/', views.ebr_reject, name='ebr_reject'),
+
+    # API для панели директора
+    path('api/director-stats/', views.director_stats_api, name='director_stats_api'),
 ]

@@ -1,29 +1,30 @@
 {% extends 'base.html' %}
 
+{% block title %}Панель начальника ОКК{% endblock %}
+
 {% block content %}
 <h1>Панель начальника ОКК</h1>
 
-<div class="alert alert-danger">
-    Есть {{ deviations|length }} отклонений, требующих вашего вмешательства
-</div>
-
 <div class="nav-tabs">
     <div class="nav-tab active" data-tab="ebr-review">Проверка EBR</div>
-    <div class="nav-tab" data-tab="deviations">Отклонения</div>
+    <div class="nav-tab" data-tab="archive">Архив</div>
     <div class="nav-tab" data-tab="audit">Аудит</div>
 </div>
 
+<!-- Вкладка 1: Проверка EBR -->
 <div class="tab-content active" id="ebr-review-tab">
     <h3>Проверка электронных паспортов партий (EBR)</h3>
-    
+
+    <div id="pending-container">
+    {% if pending_review %}
     <table>
         <thead>
             <tr>
                 <th>Номер партии</th>
                 <th>Продукт</th>
-                <th>Версия MBR</th>
                 <th>Статус</th>
                 <th>Отклонения</th>
+                <th>Заключение ОКК</th>
                 <th>Действия</th>
             </tr>
         </thead>
@@ -32,141 +33,203 @@
             <tr>
                 <td>{{ ebr.batch_number }}</td>
                 <td>{{ ebr.mbr.product.product_name }}</td>
-                <td>{{ ebr.mbr.version }}</td>
                 <td>
-                    <span class="status-badge 
-                        {% if ebr.status.status_name == 'В работе' %}status-active
-                        {% elif ebr.status.status_name == 'Завершена' %}status-approved
-                        {% elif ebr.status.status_name == 'Заблокирована' %}status-blocked
-                        {% endif %}">
+                    <span class="status-badge
+                        {% if ebr.status.status_name == 'Заблокирована' %}status-blocked
+                        {% else %}status-approved{% endif %}">
                         {{ ebr.status.status_name }}
                     </span>
                 </td>
-                <td>{% if ebr.deviation_set.exists %}{{ ebr.deviation_set.count }} отклонений{% else %}Нет{% endif %}</td>
                 <td>
-                    <div class="action-buttons">
-                        <a href="{% url 'ebr:ebr_detail' ebr.document_id %}" class="action-btn">Просмотр EBR</a>
-                        {% if ebr.status.status_name == 'В работе' %}
-                            <a href="#" class="action-btn success">Подписать ЭП</a>
-                        {% endif %}
-                        {% if ebr.status.status_name == 'Заблокирована' %}
-                            <a href="#" class="action-btn">Разблокировать</a>
-                            <a href="#" class="action-btn btn-danger">Отклонить</a>
-                        {% endif %}
-                    </div>
-                </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="6">Нет партий на проверке</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-
-<div class="tab-content" id="deviations-tab">
-    <h3>Управление отклонениями</h3>
-
-    <table>
-        <thead>
-            <tr>
-                <th>Партия</th>
-                <th>Тип</th>
-                <th>Параметр</th>
-                <th>Ожидаемое</th>
-                <th>Фактическое</th>
-                <th>Статус</th>
-                <th>Действия</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for deviation in deviations %}
-            <tr>
-                <td>{{ deviation.ebr.batch_number }}</td>
-                <td>
-                    <span class="indicator
-                        {% if deviation.deviation_type == 'critical' %}indicator-red
-                        {% elif deviation.deviation_type == 'deviation' %}indicator-yellow
-                        {% else %}indicator-green{% endif %}">
-                    </span>
-                    {{ deviation.get_deviation_type_display }}
-                </td>
-                <td>{{ deviation.parameter_name }}</td>
-                <td>{{ deviation.expected_value }}</td>
-                <td>{{ deviation.actual_value }}</td>
-                <td>
-                    {% if deviation.action_taken %}
-                        Решено
+                    {% if ebr.status.status_name == 'Заблокирована' %}
+                        <span style="color:#e74c3c; font-weight:bold;">Крит.</span>
+                    {% elif ebr.has_deviation %}
+                        <span style="color:#f39c12; font-weight:bold;">{{ ebr.deviation_count }}</span>
                     {% else %}
-                        Ожидает решения
+                        Нет
                     {% endif %}
                 </td>
                 <td>
-                    <a href="{% url 'quality:deviation_resolve' deviation.id %}" class="action-btn">Рассмотреть</a>
-                </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="7">Нет отклонений</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-
-<div class="tab-content" id="audit-tab">
-    <h3>Журнал аудита</h3>
-
-    <div class="search-box">
-        <input type="text" id="audit-search" placeholder="Поиск по ID документа или пользователя">
-        <button id="search-audit-btn">Найти</button>
-    </div>
-
-    <table>
-        <thead>
-            <tr>
-                <th>Дата и время</th>
-                <th>Пользователь</th>
-                <th>Действие</th>
-                <th>Документ</th>
-                <th>Комментарий</th>
-                <th>IP-адрес</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for log in audit_logs %}
-            <tr>
-                <td>{{ log.timestamp|date:"d.m.Y H:i:s" }}</td>
-                <td>{{ log.user.last_name }} {{ log.user.first_name }}</td>
-                <td>{{ log.action.action_name }}</td>
-                <td>
-                    {% if log.document %}
-                        {{ log.document.type.type_name }} #{{ log.document.document_id }}
+                    {% if ebr.qc_visual %}
+                        <span title="{{ ebr.qc_visual }}" style="cursor:help">Читать</span>
+                        {% if ebr.qc_comments %}<span title="{{ ebr.qc_comments }}" style="font-size:20px;margin-left:3px;cursor:help;"> 💬</span>{% endif %}
                     {% else %}
                         —
                     {% endif %}
                 </td>
-                <td>{{ log.comment|default:"—" }}</td>
-                <td>{{ log.ip_address|default:"—" }}</td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="6">Нет записей аудита</td>
+                <td>
+                    <div class="action-buttons">
+                        <a href="{% url 'ebr:ebr_detail' ebr.document_id %}" class="btn" style="padding:5px 10px;font-size:0.85rem;background:#2a83bd;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-right:5px;">Просмотр EBR</a>
+                        {% if ebr.status.status_name == 'Завершена' and not ebr.signed_by %}
+                            <form method="post" action="{% url 'ebr:ebr_sign' ebr.document_id %}" style="display:inline;margin-right:5px;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn" style="padding:5px 10px;font-size:0.85rem;background:#219854;color:#fff;border:none;border-radius:4px;cursor:pointer;">Подтвердить ЭП</button>
+                            </form>
+                        {% endif %}
+                        <form method="post" action="{% url 'users:ebr_reject' ebr.document_id %}" style="display:inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn" style="padding:5px 10px;font-size:0.85rem;background:#e74c3c;color:#fff;border:none;border-radius:4px;cursor:pointer;" onclick="return confirm('Отклонить партию {{ ebr.batch_number }}?')">Отклонить</button>
+                        </form>
+                    </div>
+                </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+    {% else %}
+    <p style="color:#7f8c8d;text-align:center;padding:30px;">Нет партий на проверке</p>
+    {% endif %}
+    </div>
+</div>
+
+<!-- Вкладка 2: Архив -->
+<div class="tab-content" id="archive-tab">
+    <h3>Архив партий</h3>
+    <p style="color:#7f8c8d;font-size:14px;">Партии, по которым принято решение</p>
+
+    <div id="archive-container">
+    {% if archived %}
+    <table>
+        <thead>
+            <tr>
+                <th>Номер партии</th>
+                <th>Продукт</th>
+                <th>Дата решения</th>
+                <th>Решение</th>
+                <th>Кем принято</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody id="archive-tbody">
+            {% for ebr in archived %}
+            <tr>
+                <td>{{ ebr.batch_number }}</td>
+                <td>{{ ebr.mbr.product.product_name }}</td>
+                <td>{{ ebr.completion_date|date:"d.m.Y H:i" }}</td>
+                <td>
+                    {% if ebr.status.status_name == 'Заблокирована' %}
+                        <span style="color:#e74c3c;font-weight:bold;">Отклонено</span>
+                    {% else %}
+                        <span style="color:#219854;font-weight:bold;">Подписано</span>
+                    {% endif %}
+                </td>
+                <td>{{ ebr.signed_by.last_name }} {{ ebr.signed_by.first_name }}</td>
+                <td>
+                    <a href="{% url 'ebr:ebr_detail' ebr.document_id %}" class="btn" style="padding:5px 10px;font-size:0.85rem;background:#2a83bd;color:#fff;border:none;border-radius:4px;cursor:pointer;">Просмотр EBR</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:#7f8c8d;text-align:center;padding:30px;">Архив пуст</p>
+    {% endif %}
+    </div>
+</div>
+
+<!-- Вкладка 3: Аудит -->
+<div class="tab-content" id="audit-tab">
+    <h3>Журнал аудита</h3>
+    <p style="color: #7f8c8d; margin-bottom: 20px;">Полный журнал аудита с фильтрами, пагинацией и экспортом в CSV доступен на отдельной странице.</p>
+    <a href="{% url 'audit:audit_log' %}" class="btn" style="padding: 10px 24px; font-size: 1rem; background: #2a83bd; color: #fff; border: none; border-radius: 4px; text-decoration: none; display: inline-block;">Открыть журнал аудита</a>
 </div>
 
 <script>
-document.querySelectorAll('.nav-tab').forEach(tab => {
+// Вкладки
+document.querySelectorAll('.nav-tab').forEach(function(tab) {
     tab.addEventListener('click', function() {
-        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
         this.classList.add('active');
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
         document.getElementById(this.dataset.tab + '-tab').classList.add('active');
     });
 });
+
+// AJAX-обновление первой вкладки (Проверка EBR) каждые 3 сек
+var lastPendingCount = -1;
+setInterval(function() {
+    var reviewTab = document.querySelector('[data-tab="ebr-review"]');
+    if (!reviewTab || !reviewTab.classList.contains('active')) return;
+
+    fetch('/api/qc-chief/pending/', { credentials: 'same-origin' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.success) return;
+        var items = data.pending;
+        if (items.length === lastPendingCount) return;
+        lastPendingCount = items.length;
+
+        var container = document.getElementById('pending-container');
+        if (!container) return;
+
+        if (items.length === 0) {
+            container.innerHTML = '<p style="color:#7f8c8d;text-align:center;padding:30px;">Нет партий на проверке</p>';
+            return;
+        }
+
+        var html = '<table><thead><tr><th>Номер партии</th><th>Продукт</th><th>Статус</th><th>Отклонения</th><th>Заключение ОКК</th><th>Действия</th></tr></thead><tbody>';
+        items.forEach(function(ebr) {
+            var statusClass = ebr.status === 'Заблокирована' ? 'status-blocked' : 'status-approved';
+
+            var devHtml = '';
+            if (ebr.status === 'Заблокирована') devHtml = '<span style="color:#e74c3c;font-weight:bold;">Крит.</span>';
+            else if (ebr.deviation_count > 0) devHtml = '<span style="color:#f39c12;font-weight:bold;">' + ebr.deviation_count + '</span>';
+            else devHtml = 'Нет';
+
+            var qcHtml = '—';
+            if (ebr.qc_visual) {
+                qcHtml = '<span title="' + ebr.qc_visual + '" style="cursor:help">Читать</span>';
+                if (ebr.qc_comments) qcHtml += '<span title="' + ebr.qc_comments + '" style="font-size:20px;margin-left:3px;cursor:help;"> 💬</span>';
+            }
+
+            var actionsHtml = '<a href="/ebr/' + ebr.document_id + '/" class="btn" style="padding:5px 10px;font-size:0.85rem;background:#2a83bd;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-right:5px;">Просмотр EBR</a>';
+            if (ebr.status === 'Завершена') {
+                actionsHtml += '<form method="post" action="/ebr/' + ebr.document_id + '/sign/" style="display:inline;margin-right:5px;">{% csrf_token %}<button type="submit" class="btn" style="padding:5px 10px;font-size:0.85rem;background:#219854;color:#fff;border:none;border-radius:4px;cursor:pointer;">Подтвердить ЭП</button></form>';
+            }
+            actionsHtml += '<form method="post" action="/ebr/' + ebr.document_id + '/reject/" style="display:inline;">{% csrf_token %}<button type="submit" class="btn" style="padding:5px 10px;font-size:0.85rem;background:#e74c3c;color:#fff;border:none;border-radius:4px;cursor:pointer;" onclick="return confirm(\'Отклонить партию ' + ebr.batch_number + '?\')">Отклонить</button></form>';
+
+            html += '<tr><td>' + ebr.batch_number + '</td><td>' + ebr.product + '</td><td><span class="status-badge ' + statusClass + '">' + ebr.status + '</span></td><td>' + devHtml + '</td><td>' + qcHtml + '</td><td>' + actionsHtml + '</td></tr>';
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    })
+    .catch(function(err) { console.error('Pending error:', err); });
+}, 3000);
+
+// AJAX-обновление архива каждые 5 сек
+var lastArchiveCount = -1;
+setInterval(function() {
+    var archiveTab = document.querySelector('[data-tab="archive"]');
+    if (!archiveTab || !archiveTab.classList.contains('active')) return;
+
+    fetch('/api/qc-chief/archive/', { credentials: 'same-origin' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.success) return;
+        var items = data.archived;
+        if (items.length === lastArchiveCount) return;
+        lastArchiveCount = items.length;
+
+        var container = document.getElementById('archive-container');
+        if (!container) return;
+
+        if (items.length === 0) {
+            container.innerHTML = '<p style="color:#7f8c8d;text-align:center;padding:30px;">Архив пуст</p>';
+            return;
+        }
+
+        var html = '<table><thead><tr><th>Номер партии</th><th>Продукт</th><th>Дата решения</th><th>Решение</th><th>Кем принято</th><th>Действия</th></tr></thead><tbody id="archive-tbody">';
+        items.forEach(function(a) {
+            var dateStr = a.completion_date ? a.completion_date.substring(0, 16).replace('T', ' ') : '—';
+            var decisionHtml = a.status === 'Заблокирована'
+                ? '<span style="color:#e74c3c;font-weight:bold;">Отклонено</span>'
+                : '<span style="color:#219854;font-weight:bold;">Подписано</span>';
+            html += '<tr><td>' + a.batch_number + '</td><td>' + a.product + '</td><td>' + dateStr + '</td><td>' + decisionHtml + '</td><td>' + a.signed_by + '</td><td><a href="/ebr/' + a.document_id + '/" class="btn" style="padding:5px 10px;font-size:0.85rem;background:#2a83bd;color:#fff;border:none;border-radius:4px;cursor:pointer;">Просмотр EBR</a></td></tr>';
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    })
+    .catch(function(err) { console.error('Archive error:', err); });
+}, 5000);
 </script>
 {% endblock %}

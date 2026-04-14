@@ -16,26 +16,19 @@
             <tr>
                 <th>Тип задания</th>
                 <td>
-                    {% if task.task_type == 'sampling' %}
-                        Отбор пробы
-                    {% elif task.task_type == 'testing' %}
-                        Лабораторные испытания
-                    {% elif task.task_type == 'review' %}
-                        Проверка документации
+                    {% if task.task_type == 'sampling' %}Отбор пробы
+                    {% elif task.task_type == 'testing' %}Лабораторные испытания
+                    {% elif task.task_type == 'review' %}Проверка документации
                     {% endif %}
                 </td>
             </tr>
             <tr>
                 <th>Статус</th>
                 <td>
-                    {% if task.status == 'new' %}
-                        <span class="status-badge status-active">Новое</span>
-                    {% elif task.status == 'in_progress' %}
-                        <span class="status-badge" style="background: #fff3cd; color: #856404;">В работе</span>
-                    {% elif task.status == 'completed' %}
-                        <span class="status-badge status-approved">Завершено</span>
-                    {% elif task.status == 'rejected' %}
-                        <span class="status-badge status-blocked">Отклонено</span>
+                    {% if task.status == 'new' %}<span class="status-badge status-active">Новое</span>
+                    {% elif task.status == 'in_progress' %}<span class="status-badge" style="background:#fff3cd;color:#856404;">В работе</span>
+                    {% elif task.status == 'completed' %}<span class="status-badge status-approved">Завершено</span>
+                    {% elif task.status == 'rejected' %}<span class="status-badge status-blocked">Отклонено</span>
                     {% endif %}
                 </td>
             </tr>
@@ -46,28 +39,94 @@
         </table>
     </div>
 
-    {% if task.status != 'completed' and user.user_role == 'сотрудник ОКК' %}
+    <!-- Параметры партии (только чтение) -->
     <div class="card">
-        <h3>Результаты контроля</h3>
+        <h3>Параметры партии</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Параметр</th>
+                    <th>Номинальное</th>
+                    <th>Допуск</th>
+                    <th>Критическое</th>
+                    <th>Фактическое</th>
+                    <th>Максимум</th>
+                    <th>Статус</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in parameters %}
+                <tr>
+                    <td>{{ item.nominal.parameter.parameter_name }} ({{ item.nominal.parameter.unit }})</td>
+                    <td>{{ item.nominal.nominal_value }}</td>
+                    <td>±{{ item.nominal.tolerance_value }}</td>
+                    <td>±{{ item.nominal.critical_value }}</td>
+                    <td>
+                        {% if item.actual and item.actual.actual_value is not None %}
+                            {{ item.actual.actual_value }}
+                            {% if item.actual.source == 'equipment' %}🤖{% else %}✋{% endif %}
+                        {% else %}—{% endif %}
+                    </td>
+                    <td>
+                        {% if item.actual and item.actual.max_value is not None %}{{ item.actual.max_value }}
+                        {% elif item.actual and item.actual.actual_value is not None and item.actual.max_value is None %}
+                            <span style="color:#e74c3c;">(крит.)</span>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td>
+                        {% if item.status == 'critical' %}<span class="indicator indicator-red"></span> Критическое
+                        {% elif item.status == 'deviation' %}<span class="indicator indicator-orange"></span> Отклонение
+                        {% elif item.status == 'warning' %}<span class="indicator indicator-yellow"></span> Предупреждение
+                        {% elif item.status == 'pending' %}<span class="indicator indicator-gray"></span> Ожидает
+                        {% else %}<span class="indicator indicator-green"></span> Норма
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7">Нет параметров</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Форма ввода времени распадаемости (сотрудник ОКК) -->
+    {% if task.status != 'completed' and user.user_role == 'сотрудник ОКК' %}
+    <div class="card" style="border-left: 4px solid #2a83bd;">
+        <h3>Результаты контроля + время распадаемости</h3>
         <form method="post" action="{% url 'quality:qc_submit_results' task.id %}" enctype="multipart/form-data">
             {% csrf_token %}
-            
+
             <div class="form-group">
                 <label for="visual_control">Визуальный контроль</label>
-                <textarea id="visual_control" name="visual_control" rows="4"
+                <textarea id="visual_control" name="visual_control" rows="3"
                           placeholder="Введите результаты визуального контроля"></textarea>
                 <div class="error-message" id="visual-error"></div>
             </div>
 
             <div class="form-group">
                 <label for="lab_results">Лабораторные испытания</label>
-                <textarea id="lab_results" name="lab_results" rows="4"
-                          placeholder="Введите результаты лабораторных испытаний"></textarea>
+                <textarea id="lab_results" name="lab_results" rows="3"
+                          placeholder="Например: Время распадаемости: 15 мин. Примечания: норма."></textarea>
                 <div class="error-message" id="lab-error"></div>
+                <small style="color:#7f8c8d;">Укажите время распадаемости в формате «XX мин» для автоматического занесения в EBR.</small>
             </div>
 
-            <div class="form-group">
-                <label for="qc_files">Прикрепить файлы (сканы протоколов)</label>
+            {% for item in parameters %}
+                {% if 'распадаем' in item.nominal.parameter.parameter_name|lower %}
+                <div class="form-group" style="margin-top: 10px;">
+                    <label>Время распадаемости ({{ item.nominal.parameter.unit }}):</label>
+                    <input type="text" name="disintegration_time"
+                           placeholder="Например: 15"
+                           style="width: 150px;">
+                    <span style="margin-left: 10px; color: #7f8c8d;">
+                        (номинал: {{ item.nominal.nominal_value }}, допуск: ±{{ item.nominal.tolerance_value }}, крит.: ±{{ item.nominal.critical_value }})
+                    </span>
+                </div>
+                {% endif %}
+            {% endfor %}
+
+            <div class="form-group" style="margin-top: 10px;">
+                <label for="qc_files">Прикрепить файлы</label>
                 <input type="file" id="qc_files" name="qc_files" multiple>
             </div>
 
@@ -80,22 +139,10 @@
     <div class="card">
         <h3>Отправленные результаты</h3>
         <table>
-            <tr>
-                <th>Визуальный контроль</th>
-                <td>{{ task.qcresult.visual_control }}</td>
-            </tr>
-            <tr>
-                <th>Лабораторные испытания</th>
-                <td>{{ task.qcresult.lab_results }}</td>
-            </tr>
-            <tr>
-                <th>Отправил</th>
-                <td>{{ task.qcresult.submitted_by.get_full_name }}</td>
-            </tr>
-            <tr>
-                <th>Дата отправки</th>
-                <td>{{ task.qcresult.submitted_at|date:"d.m.Y H:i" }}</td>
-            </tr>
+            <tr><th>Визуальный контроль</th><td>{{ task.qcresult.visual_control }}</td></tr>
+            <tr><th>Лабораторные</th><td>{{ task.qcresult.lab_results }}</td></tr>
+            <tr><th>Отправил</th><td>{{ task.qcresult.submitted_by.get_full_name }}</td></tr>
+            <tr><th>Дата</th><td>{{ task.qcresult.submitted_at|date:"d.m.Y H:i" }}</td></tr>
         </table>
     </div>
     {% endif %}
@@ -107,13 +154,11 @@
 
 <script>
 const extendedCharsRegex = /^[a-zA-Zа-яА-Я0-9\s\-._,;:!?()]+$/;
-
 function validateTextField(fieldId, errorId) {
     const input = document.getElementById(fieldId);
     const error = document.getElementById(errorId);
-    const value = input.value;
-    
-    if (value && !extendedCharsRegex.test(value)) {
+    if (!input || !error) return true;
+    if (input.value && !extendedCharsRegex.test(input.value)) {
         input.classList.add('error');
         error.textContent = 'Используются неразрешённые символы';
         return false;
@@ -122,13 +167,7 @@ function validateTextField(fieldId, errorId) {
     error.textContent = '';
     return true;
 }
-
-document.getElementById('visual_control').addEventListener('blur', function() {
-    validateTextField('visual_control', 'visual-error');
-});
-
-document.getElementById('lab_results').addEventListener('blur', function() {
-    validateTextField('lab_results', 'lab-error');
-});
+document.getElementById('visual_control')?.addEventListener('blur', function() { validateTextField('visual_control', 'visual-error'); });
+document.getElementById('lab_results')?.addEventListener('blur', function() { validateTextField('lab_results', 'lab-error'); });
 </script>
 {% endblock %}

@@ -5,7 +5,8 @@
 {% block content %}
 <div class="interface-section">
     <h2>Электронный паспорт партии: {{ ebr.batch_number }}</h2>
-    
+
+    <!-- Основная информация -->
     <div class="card">
         <h3>Основная информация</h3>
         <table>
@@ -24,12 +25,14 @@
             <tr>
                 <th>Статус</th>
                 <td>
-                    {% if ebr.status.status_name == 'В работе' %}
-                        <span class="status-badge status-active">{{ ebr.status.status_name }}</span>
+                    {% if ebr.status.status_name == 'В ожидании' %}
+                        <span class="status-badge status-waiting">⏳ В ожидании</span>
+                    {% elif ebr.status.status_name == 'В работе' %}
+                        <span class="status-badge status-active">🔄 В работе</span>
                     {% elif ebr.status.status_name == 'Завершена' %}
-                        <span class="status-badge status-approved">{{ ebr.status.status_name }}</span>
+                        <span class="status-badge status-approved">✅ Завершена</span>
                     {% elif ebr.status.status_name == 'Заблокирована' %}
-                        <span class="status-badge status-blocked">{{ ebr.status.status_name }}</span>
+                        <span class="status-badge status-blocked">⛔ Заблокирована</span>
                     {% endif %}
                 </td>
             </tr>
@@ -58,7 +61,6 @@
                     <th>Статус</th>
                     <th>Начало</th>
                     <th>Завершение</th>
-                    <th>Комментарий</th>
                     <th>Действия</th>
                 </tr>
             </thead>
@@ -74,138 +76,335 @@
                         {% elif op.status == 'blocked' %}
                             <span class="indicator indicator-red"></span> Заблокирована
                         {% else %}
-                            <span class="indicator"></span> Ожидает
+                            <span class="indicator indicator-gray"></span> Ожидает
                         {% endif %}
                     </td>
                     <td>{{ op.started_at|date:"d.m.Y H:i"|default:"—" }}</td>
                     <td>{{ op.completed_at|date:"d.m.Y H:i"|default:"—" }}</td>
-                    <td>{{ op.operator_comment|default:"—" }}</td>
                     <td>
-                        {% if op.status == 'in_progress' and user.user_role == 'оператор' %}
-                            <form method="post" action="{% url 'ebr:complete_operation' op.id %}" style="display: inline;">
-                                {% csrf_token %}
-                                <button type="submit" class="btn btn-success" style="padding: 5px 10px;">Подтвердить выполнение</button>
-                            </form>
+                        {% if op.status == 'in_progress' and user.user_role == 'оператор' and ebr.status.status_name != 'Заблокирована' %}
+                            {% if op.operation_name == 'Работа пресса' %}
+                                <!-- Операция «Работа пресса» — ввод времени прессования -->
+                                <button class="btn btn-success" style="padding: 5px 10px;" onclick="showPressingTimeForm({{ op.id }})">Запустить пресс</button>
+                                <div id="pressing-form-{{ op.id }}" style="display:none; margin-top: 8px;">
+                                    <label>Время прессования (сек):</label>
+                                    <input type="number" id="pressing-time-{{ op.id }}" min="30" max="300" step="1" value="30" style="width: 80px;">
+                                    <button class="btn btn-success" style="padding: 5px 10px;" onclick="startPressing({{ op.id }}, {{ ebr.document_id }})">Старт</button>
+                                </div>
+                            {% else %}
+                                <form method="post" action="{% url 'ebr:complete_operation' op.id %}" style="display: inline;">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-success" style="padding: 5px 10px;">Подтвердить выполнение</button>
+                                </form>
+                            {% endif %}
                         {% endif %}
                     </td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="6">Нет операций</td>
+                    <td colspan="5">Нет операций</td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
-        
-        {% if user.user_role == 'технолог' and not operations %}
+
+        <!-- Кнопка начала производства (для оператора) -->
+        {% if user.user_role == 'оператор' and ebr.status.status_name == 'В ожидании' %}
         <form method="post" action="{% url 'ebr:ebr_start' ebr.document_id %}" style="margin-top: 15px;">
             {% csrf_token %}
-            <button type="submit" class="btn btn-success">Начать производство</button>
+            <button type="submit" class="btn btn-success">Взять партию в производство</button>
         </form>
         {% endif %}
     </div>
 
-    <!-- Параметры -->
+    <!-- Сырьё (для оператора — при операции «Выбор сырья») -->
+    {% if raw_materials and user.user_role == 'оператор' %}
     <div class="card">
-        <h3>Параметры процесса</h3>
+        <h3>Сырьё для партии</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Наименование сырья</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rm in raw_materials %}
+                <tr>
+                    <td>{{ rm.material_name }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td>Нет сырья</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <!-- Заключение ОКК -->
+    {% if qc_result and user.user_role == 'начальник ОКК' %}
+    <div class="card" style="margin-top:15px;">
+        <h3>Заключение сотрудника ОКК</h3>
+        <div style="margin-bottom:10px;">
+            <strong>Визуальный контроль:</strong>
+            <p style="margin:5px 0 0 0;white-space:pre-wrap;">{{ qc_result.visual_control }}</p>
+        </div>
+        <div style="margin-bottom:10px;">
+            <strong>Время распадаемости:</strong> {{ qc_result.lab_results|default:"—" }} мин
+        </div>
+        {% if qc_result.comments %}
+        <div>
+            <strong>Комментарий:</strong>
+            <p style="margin:5px 0 0 0;white-space:pre-wrap;">{{ qc_result.comments }}</p>
+        </div>
+        {% endif %}
+        <div style="margin-top:10px;color:#7f8c8d;font-size:13px;">
+            Предоставил: {{ qc_result.submitted_by.last_name }} {{ qc_result.submitted_by.first_name }} |
+            {{ qc_result.submitted_at|date:"d.m.Y H:i" }}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Электронная подпись -->
+    {% if e_signature and user.user_role == 'начальник ОКК' %}
+    <div class="card" style="margin-top:15px; border-left: 4px solid #219854;">
+        <h3>🔐 Электронная подпись</h3>
+        <div style="margin-bottom:8px;">
+            <strong>Подписал:</strong> {{ e_signature.user.last_name }} {{ e_signature.user.first_name }}
+        </div>
+        <div style="margin-bottom:8px;">
+            <strong>Дата подписи:</strong> {{ e_signature.signature_date|date:"d.m.Y H:i:s" }}
+        </div>
+        <div style="margin-bottom:8px;">
+            <strong>Хэш подписи:</strong>
+            <code style="font-size:11px; word-break: break-all; display: block; margin-top: 4px; padding: 8px; background: #f8f9fa; border-radius: 4px;">{{ e_signature.signature_hash }}</code>
+        </div>
+        {% if e_signature.comment %}
+        <div>
+            <strong>Комментарий:</strong> {{ e_signature.comment }}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Номинальные параметры (из MBR) -->
+    <div class="card">
+        <h3>Номинальные параметры (из MBR)</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Параметр</th>
+                    <th>Номинальное значение</th>
+                    <th>Допуск (±)</th>
+                    <th>Критическое отклонение (±)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in parameters %}
+                <tr>
+                    <td>{{ item.nominal.parameter.parameter_name }} ({{ item.nominal.parameter.unit }})</td>
+                    <td>{{ item.nominal.nominal_value }}</td>
+                    <td>±{{ item.nominal.tolerance_value }}</td>
+                    <td>±{{ item.nominal.critical_value }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4">Нет параметров</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Фактические параметры -->
+    <div class="card">
+        <h3>Фактические параметры</h3>
+        <table id="actual-params-table">
+            <thead>
+                <tr>
+                    <th>Параметр</th>
+                    <th>Фактическое</th>
+                    <th>Максимум</th>
+                    <th>Источник</th>
+                    <th>Статус</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in parameters %}
+                <tr>
+                    <td>{{ item.nominal.parameter.parameter_name }} ({{ item.nominal.parameter.unit }})</td>
+                    <td>
+                        {% if item.actual and item.actual.actual_value is not None %}
+                            {{ item.actual.actual_value }}
+                        {% else %}
+                            <span style="color: #95a5a6;">— Ожидает</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if item.actual and item.actual.max_value is not None %}
+                            {{ item.actual.max_value }}
+                        {% elif item.status == 'critical' and item.actual and item.actual.actual_value is not None %}
+                            <span style="color: #e74c3c;">(критическое)</span>
+                        {% elif item.actual and item.actual.max_value is None %}
+                            {{ item.actual.actual_value }}
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if item.actual %}
+                            {% if item.actual.source == 'equipment' %}🤖 Оборудование
+                            {% elif item.actual.source == 'manual' %}✋ Вручную
+                            {% else %}—
+                            {% endif %}
+                        {% else %}—{% endif %}
+                    </td>
+                    <td>
+                        {% if item.status == 'critical' %}
+                            <span class="indicator indicator-red"></span> Критическое
+                        {% elif item.status == 'deviation' %}
+                            <span class="indicator indicator-orange"></span> Отклонение
+                        {% elif item.status == 'warning' %}
+                            <span class="indicator indicator-yellow"></span> Предупреждение
+                        {% elif item.status == 'pending' %}
+                            <span class="indicator indicator-gray"></span> Ожидает
+                        {% else %}
+                            <span class="indicator indicator-green"></span> Норма
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5">Нет параметров</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Форма ввода времени распадаемости (для сотрудника ОКК) -->
+    {% if user.user_role == 'сотрудник ОКК' %}
+    <div class="card" style="border-left: 4px solid #2a83bd;">
+        <h3>Ввод времени распадаемости</h3>
         <form method="post" action="{% url 'ebr:ebr_add_data' ebr.document_id %}">
             {% csrf_token %}
-            <table id="parameters-table">
-                <thead>
-                    <tr>
-                        <th>Параметр</th>
-                        <th>Целевое значение</th>
-                        <th>Допуск (%)</th>
-                        <th>Критическое (%)</th>
-                        <th>Фактическое значение</th>
-                        <th>Статус</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for param in parameters %}
-                    <tr>
-                        <td>{{ param.parameter.parameter_name }} ({{ param.parameter.unit }})</td>
-                        <td>{{ param.parameter.value }}</td>
-                        <td>{{ param.parameter.tolerance }}%</td>
-                        <td>{{ param.parameter.critical_deviation }}%</td>
-                        <td>
-                            <input type="text" name="param_{{ param.parameter_id }}" 
-                                   value="{{ param.actual_value|default:'' }}"
-                                   class="param-input" data-target="{{ param.parameter.value }}"
-                                   data-tolerance="{{ param.parameter.tolerance }}"
-                                   data-critical="{{ param.parameter.critical_deviation }}">
-                        </td>
-                        <td>
-                            <span class="param-status" data-param="{{ param.parameter_id }}">
-                                {% if param.actual_value %}
-                                    <span class="indicator indicator-green"></span> В норме
-                                {% endif %}
-                            </span>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            <button type="submit" class="btn btn-primary">Сохранить параметры</button>
+            {% for item in parameters %}
+                {% if 'распадаем' in item.nominal.parameter.parameter_name|lower or 'disintegration' in item.nominal.parameter.parameter_name|lower %}
+                    <div class="form-group">
+                        <label>{{ item.nominal.parameter.parameter_name }} ({{ item.nominal.parameter.unit }}):</label>
+                        <input type="text" name="param_{{ item.nominal.parameter_id }}"
+                               value="{{ item.actual.actual_value|default:'' }}"
+                               class="param-input"
+                               placeholder="Введите значение"
+                               style="width: 200px;">
+                        <span style="margin-left: 10px; color: #7f8c8d;">
+                            (номинал: {{ item.nominal.nominal_value }} {{ item.nominal.parameter.unit }},
+                            допуск: ±{{ item.nominal.tolerance_value }},
+                            крит.: ±{{ item.nominal.critical_value }})
+                        </span>
+                    </div>
+                {% endif %}
+            {% endfor %}
+            <button type="submit" class="btn btn-success">Сохранить</button>
         </form>
     </div>
+    {% endif %}
 
-    <!-- Визуальный контроль и комментарии -->
+    <!-- Решение начальника ОКК -->
+    {% if user.user_role == 'начальник ОКК' %}
+    <div class="card" style="border-left: 4px solid #219854;">
+        <h3>Решение по партии</h3>
+        {% if ebr.status.status_name == 'Заблокирована' %}
+        <p style="color: #e74c3c; font-weight: bold;">⛔ Партия заблокирована из-за критического отклонения</p>
+        <form method="post" action="{% url 'quality:deviation_list' %}" style="margin-bottom: 10px;">
+            <p>Перейдите к <a href="{% url 'quality:deviation_list' %}">списку отклонений</a> для принятия решения.</p>
+        </form>
+        {% elif ebr.status.status_name != 'Завершена' %}
+        <form method="post" action="{% url 'ebr:ebr_sign' ebr.document_id %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-success">✅ Подписать ЭП и завершить партию</button>
+        </form>
+        {% else %}
+        <p style="color: #219854;">✅ Партия подписана и завершена</p>
+        <p><strong>Подписал:</strong> {{ ebr.signed_by.get_full_name|default:"—" }}</p>
+        <p><strong>Дата завершения:</strong> {{ ebr.completion_date|date:"d.m.Y H:i"|default:"—" }}</p>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Визуальный контроль и комментарии (только чтение для большинства, редактирование для ОКК) -->
+    {% if user.user_role in 'сотрудник ОКК,начальник ОКК,технолог,главный технолог' %}
     <div class="card">
         <h3>Визуальный контроль и лабораторные испытания</h3>
+        {% if user.user_role in 'сотрудник ОКК,начальник ОКК' %}
         <form method="post">
             {% csrf_token %}
-            <textarea name="inspection_notes" rows="4" 
+            <textarea name="inspection_notes" rows="4"
                       placeholder="Введите результаты визуального контроля и лабораторных испытаний">{{ ebr.inspection_notes|default:'' }}</textarea>
             <div class="error-message" id="inspection-error"></div>
-            
-            <div class="form-group" style="margin-top: 15px;">
-                <label for="comments">Комментарий</label>
-                <textarea id="comments" name="comments" rows="3"
-                          placeholder="Введите комментарий">{{ ebr.comments|default:'' }}</textarea>
-                <div class="error-message" id="comments-error"></div>
-            </div>
-            
-            <button type="submit" class="btn btn-primary">Сохранить</button>
+            <button type="submit" class="btn btn-primary" style="margin-top: 10px;">Сохранить</button>
         </form>
+        {% else %}
+        <p>{{ ebr.inspection_notes|default:"Не внесено"|linebreaks }}</p>
+        {% endif %}
     </div>
+    {% endif %}
 
     <div style="margin-top: 20px;">
-        <a href="{% url 'ebr:ebr_list' %}" class="btn">Назад к списку</a>
+        {% if request.session.user_role == 'начальник ОКК' %}
+            <a href="{% url 'users:qc_chief_dashboard' %}" class="btn">Назад к списку</a>
+        {% elif request.session.user_role == 'технолог' %}
+            <a href="{% url 'users:technologist_dashboard' %}" class="btn">Назад к списку</a>
+        {% elif request.session.user_role == 'оператор' %}
+            <a href="{% url 'users:operator_dashboard' %}" class="btn">Назад к списку</a>
+        {% else %}
+            <a href="{% url 'ebr:ebr_list' %}" class="btn">Назад к списку</a>
+        {% endif %}
     </div>
 </div>
 
 <script>
-// Проверка параметров в реальном времени
-function checkParameter(input) {
-    const actualValue = parseFloat(input.value.replace(',', '.'));
-    const target = parseFloat(input.dataset.target);
-    const tolerance = parseFloat(input.dataset.tolerance);
-    const critical = parseFloat(input.dataset.critical);
-    const statusSpan = document.querySelector(`[data-param="${input.dataset.param}"]`);
-    
-    if (isNaN(actualValue)) {
-        statusSpan.innerHTML = '<span class="indicator"></span> Не введено';
-        return;
-    }
-    
-    const diffPercent = Math.abs((actualValue - target) / target * 100);
-    
-    if (diffPercent > critical) {
-        statusSpan.innerHTML = '<span class="indicator indicator-red"></span> Критическое отклонение';
-        input.classList.add('error');
-    } else if (diffPercent > tolerance) {
-        statusSpan.innerHTML = '<span class="indicator indicator-yellow"></span> Отклонение';
-        input.classList.remove('error');
-    } else {
-        statusSpan.innerHTML = '<span class="indicator indicator-green"></span> В норме';
-        input.classList.remove('error');
-    }
+// Показать форму ввода времени прессования
+function showPressingTimeForm(opId) {
+    const form = document.getElementById('pressing-form-' + opId);
+    form.style.display = form.style.display === 'none' ? 'block' : 'none';
 }
 
-document.querySelectorAll('.param-input').forEach(input => {
-    input.addEventListener('blur', function() { checkParameter(this); });
-});
+// Запуск пресса с заданным временем
+function startPressing(opId, ebrId) {
+    const timeInput = document.getElementById('pressing-time-' + opId);
+    const pressingTime = parseInt(timeInput.value);
+
+    if (isNaN(pressingTime) || pressingTime < 30 || pressingTime > 300) {
+        alert('Время прессования должно быть целым числом от 30 до 300 секунд');
+        return;
+    }
+
+    // Сначала подтверждаем операцию, потом запускаем симулятор
+    const formData = new FormData();
+    formData.append('pressing_time', pressingTime);
+    formData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
+
+    fetch(`/ebr/${ebrId}/start-pressing/`, {
+        method: 'POST',
+        body: formData,
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alert(`Пресс запущен на ${pressingTime} секунд. Мониторинг активен.`);
+            location.reload();
+        } else {
+            alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+        }
+    })
+    .catch(err => {
+        alert('Ошибка запуска пресса');
+        console.error(err);
+    });
+}
 
 // Валидация полей ввода
 const extendedCharsRegex = /^[a-zA-Zа-яА-Я0-9\s\-._,;:!?()]+$/;
@@ -213,8 +412,8 @@ const extendedCharsRegex = /^[a-zA-Zа-яА-Я0-9\s\-._,;:!?()]+$/;
 function validateTextField(fieldId, errorId) {
     const input = document.getElementById(fieldId);
     const error = document.getElementById(errorId);
+    if (!input || !error) return true;
     const value = input.value;
-    
     if (value && !extendedCharsRegex.test(value)) {
         input.classList.add('error');
         error.textContent = 'Используются неразрешённые символы';
@@ -225,12 +424,11 @@ function validateTextField(fieldId, errorId) {
     return true;
 }
 
-document.querySelector('textarea[name="inspection_notes"]').addEventListener('blur', function() {
-    validateTextField('inspection_notes', 'inspection-error');
-});
-
-document.getElementById('comments').addEventListener('blur', function() {
-    validateTextField('comments', 'comments-error');
-});
+const inspectionTextarea = document.querySelector('textarea[name="inspection_notes"]');
+if (inspectionTextarea) {
+    inspectionTextarea.addEventListener('blur', function() {
+        validateTextField('inspection_notes', 'inspection-error');
+    });
+}
 </script>
 {% endblock %}

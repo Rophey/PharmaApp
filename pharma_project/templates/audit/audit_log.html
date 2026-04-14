@@ -6,45 +6,150 @@
 <div class="interface-section">
     <h2>Журнал аудита</h2>
 
-    <div class="alert alert-warning">
-        <strong>Внимание:</strong> Журнал аудита является неизменяемым. Записи не могут быть модифицированы или удалены.
+    <div class="alert" style="background: #e8f5e9; padding: 10px 15px; border-left: 4px solid #219854; margin-bottom: 20px; border-radius: 4px;">
+        Журнал аудита является неизменяемым. Записи не могут быть модифицированы или удалены.
     </div>
 
+    <!-- Фильтры -->
+    <div class="card" style="margin-bottom: 20px;">
+        <h4 style="margin-top: 0;">Фильтры</h4>
+        <form method="get" style="display: flex; flex-wrap: wrap; gap: 15px; align-items: flex-end;">
+            <div style="flex: 1; min-width: 150px;">
+                <label style="font-size: 13px; color: #7f8c8d;">Пользователь</label>
+                <select name="user" style="width: 100%; padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px;">
+                    <option value="">Все</option>
+                    {% for u in users %}
+                    <option value="{{ u.user_id }}" {% if filter_user == u.user_id|stringformat:"s" %}selected{% endif %}>
+                        {{ u.last_name }} {{ u.first_name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="flex: 1; min-width: 150px;">
+                <label style="font-size: 13px; color: #7f8c8d;">Действие</label>
+                <select name="action" style="width: 100%; padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px;">
+                    <option value="">Все</option>
+                    {% for a in actions %}
+                    <option value="{{ a.id }}" {% if filter_action == a.id|stringformat:"s" %}selected{% endif %}>
+                        {{ a.action_name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="flex: 1; min-width: 120px;">
+                <label style="font-size: 13px; color: #7f8c8d;">Дата от</label>
+                <input type="date" name="date_from" value="{{ filter_date_from }}" style="width: 100%; padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px;">
+            </div>
+            <div style="flex: 1; min-width: 120px;">
+                <label style="font-size: 13px; color: #7f8c8d;">Дата до</label>
+                <input type="date" name="date_to" value="{{ filter_date_to }}" style="width: 100%; padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px;">
+            </div>
+            <div style="flex: 2; min-width: 150px;">
+                <label style="font-size: 13px; color: #7f8c8d;">Поиск</label>
+                <input type="text" name="search" value="{{ filter_search }}" placeholder="По комментарию, действию, ФИО..." style="width: 100%; padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px;">
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <button type="submit" class="btn btn-primary" style="padding: 8px 16px;">Найти</button>
+                <a href="{% url 'audit:audit_log' %}" class="btn" style="padding: 8px 16px; background: #95a5a6; color: #fff; border: none; border-radius: 4px; text-decoration: none;">Сброс</a>
+                <a href="?export=csv&user={{ filter_user }}&action={{ filter_action }}&date_from={{ filter_date_from }}&date_to={{ filter_date_to }}&search={{ filter_search }}" class="btn" style="padding: 8px 16px; background: #27ae60; color: #fff; border: none; border-radius: 4px; text-decoration: none;">CSV</a>
+            </div>
+        </form>
+    </div>
+
+    <!-- Таблица -->
+    {% if page_obj %}
+    <div style="margin-bottom: 10px; color: #7f8c8d; font-size: 14px;">
+        Показано {{ page_obj.start_index }}–{{ page_obj.end_index }} из {{ page_obj.paginator.count }} записей
+    </div>
     <table id="audit-log-table">
         <thead>
             <tr>
-                <th>Дата и время</th>
-                <th>Пользователь</th>
-                <th>Действие</th>
-                <th>Документ</th>
+                <th style="width: 140px;">Дата и время</th>
+                <th style="width: 150px;">Пользователь</th>
+                <th style="width: 140px;">Действие</th>
+                <th style="width: 200px;">Документ</th>
                 <th>Комментарий</th>
+                <th style="width: 120px;">IP-адрес</th>
             </tr>
         </thead>
         <tbody>
-            {% for log in logs %}
+            {% for log in page_obj %}
             <tr>
                 <td>{{ log.timestamp|date:"d.m.Y H:i:s" }}</td>
-                <td>{{ log.user.get_full_name }}</td>
+                <td>{{ log.user.last_name }} {{ log.user.first_name }}</td>
                 <td>{{ log.action.action_name }}</td>
                 <td>
                     {% if log.document %}
-                        Документ #{{ log.document.document_id }} ({{ log.document.type.type_name }})
+                        {% if log.document.type.type_name == 'EBR' %}
+                            {% for ebr in log.document.ebr_set.all %}
+                                <a href="{% url 'ebr:ebr_detail' ebr.document_id %}" style="color: #2a83bd; text-decoration: none;">
+                                    Партия {{ ebr.batch_number }}
+                                </a>
+                            {% empty %}
+                                EBR #{{ log.document.pk }}
+                            {% endfor %}
+                        {% elif log.document.type.type_name == 'MBR' %}
+                            {% for mbr in log.document.mbr_set.all %}
+                                <a href="{% url 'mbr:mbr_detail' mbr.document_id %}" style="color: #2a83bd; text-decoration: none;">
+                                    MBR {{ mbr.product.product_code }} {{ mbr.version }}
+                                </a>
+                            {% empty %}
+                                MBR #{{ log.document.pk }}
+                            {% endfor %}
+                        {% else %}
+                            #{{ log.document.pk }} ({{ log.document.type.type_name }})
+                        {% endif %}
                     {% else %}
                         —
                     {% endif %}
                 </td>
-                <td>{{ log.comment|default:"—" }}</td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="5">Нет записей в журнале</td>
+                <td style="max-width: 300px; word-break: break-word;">{{ log.comment|default:"—" }}</td>
+                <td style="font-family: monospace; font-size: 12px;">{{ log.ip_address|default:"—" }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+
+    <!-- Пагинация -->
+    <div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 20px;">
+        {% if page_obj.has_previous %}
+            <a href="?page=1{% if filter_user %}&user={{ filter_user }}{% endif %}{% if filter_action %}&action={{ filter_action }}{% endif %}{% if filter_date_from %}&date_from={{ filter_date_from }}{% endif %}{% if filter_date_to %}&date_to={{ filter_date_to }}{% endif %}{% if filter_search %}&search={{ filter_search }}{% endif %}" class="btn" style="padding: 6px 12px; background: #ecf0f1; color: #2c3e50; border: none; border-radius: 4px; text-decoration: none;">&laquo; Начало</a>
+            <a href="?page={{ page_obj.previous_page_number }}{% if filter_user %}&user={{ filter_user }}{% endif %}{% if filter_action %}&action={{ filter_action }}{% endif %}{% if filter_date_from %}&date_from={{ filter_date_from }}{% endif %}{% if filter_date_to %}&date_to={{ filter_date_to }}{% endif %}{% if filter_search %}&search={{ filter_search }}{% endif %}" class="btn" style="padding: 6px 12px; background: #ecf0f1; color: #2c3e50; border: none; border-radius: 4px; text-decoration: none;">&lsaquo; Пред.</a>
+        {% endif %}
+
+        <span style="padding: 6px 12px; background: #2a83bd; color: #fff; border-radius: 4px;">
+            Страница {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}
+        </span>
+
+        {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}{% if filter_user %}&user={{ filter_user }}{% endif %}{% if filter_action %}&action={{ filter_action }}{% endif %}{% if filter_date_from %}&date_from={{ filter_date_from }}{% endif %}{% if filter_date_to %}&date_to={{ filter_date_to }}{% endif %}{% if filter_search %}&search={{ filter_search }}{% endif %}" class="btn" style="padding: 6px 12px; background: #ecf0f1; color: #2c3e50; border: none; border-radius: 4px; text-decoration: none;">След. &rsaquo;</a>
+            <a href="?page={{ page_obj.paginator.num_pages }}{% if filter_user %}&user={{ filter_user }}{% endif %}{% if filter_action %}&action={{ filter_action }}{% endif %}{% if filter_date_from %}&date_from={{ filter_date_from }}{% endif %}{% if filter_date_to %}&date_to={{ filter_date_to }}{% endif %}{% if filter_search %}&search={{ filter_search }}{% endif %}" class="btn" style="padding: 6px 12px; background: #ecf0f1; color: #2c3e50; border: none; border-radius: 4px; text-decoration: none;">Конец &raquo;</a>
+        {% endif %}
+    </div>
+    {% else %}
+    <p style="color: #7f8c8d; text-align: center; padding: 30px;">Нет записей в журнале</p>
+    {% endif %}
 </div>
 
 <style>
+#audit-log-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+}
+#audit-log-table th {
+    background-color: #f8f9fa;
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 2px solid #dee2e6;
+    font-size: 13px;
+    color: #495057;
+}
+#audit-log-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #e9ecef;
+    font-size: 13px;
+}
 #audit-log-table tbody tr:hover {
     background-color: #f5f5f5;
 }

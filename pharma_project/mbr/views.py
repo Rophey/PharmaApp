@@ -20,9 +20,80 @@ def mbr_create(request):
         return redirect('login')
 
     if request.method == 'POST':
-        # Здесь будет логика создания MBR
+        import datetime
+        from audit.models import Action, AuditLog
+        from .models import MBRStatus, MBRParameter, MBRRawMaterial, Document
+
+        product_name = request.POST.get('product_name', '').strip()
+        product_code = request.POST.get('product_code', '').strip()
+        operations = request.POST.get('operations', '').strip()
+        comments = request.POST.get('comments', '').strip()
+        raw_material_ids = request.POST.getlist('raw_materials')
+
+        # Создаём или получаем продукт
+        product, _ = Product.objects.get_or_create(
+            product_code=product_code,
+            defaults={'product_name': product_name}
+        )
+
+        # Создаём документ
+        doc_type = DocumentType.objects.get(type_name='MBR')
+        doc = Document.objects.create(type=doc_type)
+
+        # Получаем статус "Черновик"
+        draft_status = MBRStatus.objects.get(status_name='Черновик')
+
+        # Создаём MBR
+        mbr = MBR.objects.create(
+            document=doc,
+            product=product,
+            version='v1',
+            status=draft_status,
+            operations=operations,
+            comments=comments,
+        )
+
+        # Привязываем сырьё
+        for rm_id in raw_material_ids:
+            if rm_id:
+                MBRRawMaterial.objects.create(mbr=mbr, raw_material_id=int(rm_id))
+
+        # Сохраняем параметры (value, tolerance, critical_deviation — собственные для этого MBR)
+        from decimal import Decimal, InvalidOperation
+        parameters = Parameter.objects.all()
+        for param in parameters:
+            value_str = request.POST.get(f'param_value_{param.id}', '0').replace(',', '.')
+            tolerance_str = request.POST.get(f'param_tolerance_{param.id}', '0').replace(',', '.')
+            critical_str = request.POST.get(f'param_critical_{param.id}', '0').replace(',', '.')
+
+            try:
+                value = Decimal(value_str) if value_str else Decimal('0')
+                tolerance = Decimal(tolerance_str) if tolerance_str else Decimal('0')
+                critical = Decimal(critical_str) if critical_str else Decimal('0')
+            except InvalidOperation:
+                value = Decimal('0')
+                tolerance = Decimal('0')
+                critical = Decimal('0')
+
+            MBRParameter.objects.create(
+                mbr=mbr,
+                parameter=param,
+                value=value,
+                tolerance=tolerance,
+                critical_deviation=critical,
+            )
+
+        # Лог в аудит
+        action = Action.objects.get(action_name='Создание MBR')
+        AuditLog.objects.create(
+            user=request.current_user,
+            action=action,
+            document=doc,
+            comment=f"Создан MBR {product_code} v1"
+        )
+
         messages.success(request, 'MBR создан')
-        return redirect('mbr:mbr_list')
+        return redirect('mbr:mbr_detail', pk=mbr.document_id)
 
     products = Product.objects.all()
     raw_materials = RawMaterial.objects.all()
@@ -59,12 +130,77 @@ def mbr_edit(request, pk):
         return redirect('mbr:mbr_detail', pk=pk)
 
     if request.method == 'POST':
+        from decimal import Decimal, InvalidOperation
+        from audit.models import Action, AuditLog
+
+        product_name = request.POST.get('product_name', '').strip()
+        product_code = request.POST.get('product_code', '').strip()
+        operations = request.POST.get('operations', '').strip()
+        comments = request.POST.get('comments', '').strip()
+        raw_material_ids = request.POST.getlist('raw_materials')
+
+        # Обновляем продукт
+        mbr.product.product_name = product_name
+        mbr.product.product_code = product_code
+        mbr.product.save()
+
+        # Обновляем поля MBR
+        mbr.operations = operations
+        mbr.comments = comments
+        mbr.save()
+
+        # Обновляем сырьё
+        MBRRawMaterial.objects.filter(mbr=mbr).delete()
+        for rm_id in raw_material_ids:
+            if rm_id:
+                MBRRawMaterial.objects.create(mbr=mbr, raw_material_id=int(rm_id))
+
+        # Обновляем параметры
+        parameters = Parameter.objects.all()
+        for param in parameters:
+            value_str = request.POST.get(f'param_value_{param.id}', '0').replace(',', '.')
+            tolerance_str = request.POST.get(f'param_tolerance_{param.id}', '0').replace(',', '.')
+            critical_str = request.POST.get(f'param_critical_{param.id}', '0').replace(',', '.')
+
+            try:
+                value = Decimal(value_str) if value_str else Decimal('0')
+                tolerance = Decimal(tolerance_str) if tolerance_str else Decimal('0')
+                critical = Decimal(critical_str) if critical_str else Decimal('0')
+            except InvalidOperation:
+                value = Decimal('0')
+                tolerance = Decimal('0')
+                critical = Decimal('0')
+
+            MBRParameter.objects.update_or_create(
+                mbr=mbr,
+                parameter=param,
+                defaults={
+                    'value': value,
+                    'tolerance': tolerance,
+                    'critical_deviation': critical,
+                }
+            )
+
+        # Лог в аудит
+        action = Action.objects.get(action_name='Редактирование MBR')
+        AuditLog.objects.create(
+            user=request.current_user,
+            action=action,
+            document=mbr.document,
+            comment=f"Редактирован MBR {product_code} {mbr.version}"
+        )
+
         messages.success(request, 'MBR обновлён')
         return redirect('mbr:mbr_detail', pk=pk)
+
+    raw_materials = RawMaterial.objects.all()
+    parameters = Parameter.objects.all()
 
     context = {
         'user': request.current_user,
         'mbr': mbr,
+        'raw_materials': raw_materials,
+        'parameters': parameters,
     }
     return render(request, 'mbr/mbr_form.html', context)
 
@@ -109,12 +245,13 @@ def mbr_new_version(request, pk):
     old_mbr = get_object_or_404(MBR, document_id=pk)
 
     # Создаём новый документ
-    doc_type = DocumentType.objects.get(type_name='MBR')
+    doc_type, _ = DocumentType.objects.get_or_create(type_name='MBR')
     new_doc = Document.objects.create(type=doc_type)
 
     # Новая версия
     import re
-    version_num = int(re.search(r'v(\d+)', old_mbr.version).group(1)) + 1
+    match = re.search(r'v(\d+)', old_mbr.version)
+    version_num = int(match.group(1)) + 1 if match else 1
 
     from .models import MBRStatus, MBRParameter
     draft_status = MBRStatus.objects.get(status_name='Черновик')

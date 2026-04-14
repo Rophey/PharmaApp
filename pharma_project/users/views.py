@@ -1,11 +1,14 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.http import JsonResponse
+from django.utils import timezone
 from .models import User
 from audit.models import Action, AuditLog
 from mbr.models import DocumentType, Document
+import json
 import re
 import datetime
+from datetime import timedelta
 import logging
 
 logger = logging.getLogger(__name__)
@@ -56,16 +59,16 @@ def login_view(request):
 
                 # Логируем вход (БЕЗ ДОКУМЕНТА)
                 try:
-                    action = Action.objects.get(action_name='Вход в систему')
+                    action, _ = Action.objects.get_or_create(action_name='Вход в систему')
                     AuditLog.objects.create(
                         user=user,
                         action=action,
                         document=None,  # Явно указываем None для входа/выхода
                         ip_address=request.META.get('REMOTE_ADDR'),
-                        comment=f"Вход в систему"
+                        comment=f"Вход в систему. IP: {request.META.get('REMOTE_ADDR', 'неизвестно')}"
                     )
                 except Exception as e:
-                    print(f"Ошибка логирования: {e}")
+                    logger.error(f"Ошибка логирования входа: {e}")
 
                 messages.success(request, f"Добро пожаловать, {user.last_name} {user.first_name}!")
 
@@ -96,17 +99,17 @@ def logout_view(request):
     if 'user_id' in request.session:
         try:
             user = User.objects.get(user_id=request.session['user_id'])
-            action = Action.objects.get(action_name='Выход из системы')
+            action, _ = Action.objects.get_or_create(action_name='Выход из системы')
             # Логируем выход БЕЗ ДОКУМЕНТА
             AuditLog.objects.create(
                 user=user,
                 action=action,
                 document=None,  # Явно указываем None для входа/выхода
                 ip_address=request.META.get('REMOTE_ADDR'),
-                comment="Выход из системы"
+                comment=f"Выход из системы. IP: {request.META.get('REMOTE_ADDR', 'неизвестно')}"
             )
         except Exception as e:
-            print(f"Ошибка логирования: {e}")
+            logger.error(f"Ошибка логирования выхода: {e}")
 
     request.session.flush()
     messages.success(request, 'Вы успешно вышли из системы')
@@ -115,7 +118,7 @@ def logout_view(request):
 
 def admin_dashboard(request):
     if 'user_id' not in request.session or request.session.get('user_role') != 'системный администратор':
-        return redirect('login')
+        return redirect('users:login')
 
     user = User.objects.get(user_id=request.session['user_id'])
 
@@ -182,56 +185,402 @@ def admin_dashboard(request):
 
 def operator_dashboard(request):
     if 'user_id' not in request.session or request.session.get('user_role') != 'оператор':
-        return redirect('login')
+        return redirect('users:login')
 
-    from ebr.models import EBR, BatchOperation
+    from ebr.models import EBR, BatchOperation, EBRNominalParameter, EBRActualParameter
+    from equipment.models import EquipmentReading
 
     user = User.objects.get(user_id=request.session['user_id'])
 
-    active_tasks = BatchOperation.objects.filter(
-        status__in=['pending', 'in_progress'],
-        ebr__operator=user
-    ).select_related('ebr')
+    # Партии «В ожидании» — где оператор ЕЩЁ НЕ назначен
+    waiting_ebrs = EBR.objects.filter(
+        status__status_name='В ожидании',
+        operator__isnull=True
+    ).select_related('status', 'mbr__product').order_by('-start_date')
+
+    # Активные задачи текущего оператора (исключаем завершённые/заблокированные EBR)
+    active_tasks_qs = BatchOperation.objects.filter(
+        status__in=['pending', 'in_progress', 'completed'],
+        ebr__operator=user,
+        ebr__status__status_name__in=['В работе']
+    ).select_related('ebr', 'ebr__mbr__product', 'ebr__operator', 'ebr__status'
+    ).prefetch_related(
+        'ebr__mbr__raw_materials'
+    ).order_by('id')
+
+    # Собираем активные партии — для каждой EBR берём первую in_progress задачу,
+    # если нет — последнюю pending
+    active_parties = {}
+    for task in active_tasks_qs:
+        ebr_id = task.ebr_id
+        if ebr_id not in active_parties:
+            active_parties[ebr_id] = task
+        else:
+            # Приоритет: in_progress > pending > completed
+            current = active_parties[ebr_id]
+            if task.status == 'in_progress' and current.status != 'in_progress':
+                active_parties[ebr_id] = task
+
+    # Для каждой активной партии — параметры
+    for ebr_id, task in active_parties.items():
+        ebr = task.ebr
+        ebr.params = []
+        nominal_params = EBRNominalParameter.objects.filter(ebr=ebr).select_related('parameter')
+        actual_params = EBRActualParameter.objects.filter(ebr=ebr).select_related('parameter')
+
+        for np in nominal_params:
+            ap = actual_params.filter(parameter_id=np.parameter_id).first()
+            status = 'pending'
+            value = ap.max_value if ap and ap.max_value else (ap.actual_value if ap else None)
+            if value is not None and float(np.nominal_value) > 0:
+                diff = abs(float(value) - float(np.nominal_value))
+                if diff > float(np.critical_value):
+                    status = 'critical'
+                elif diff > float(np.tolerance_value):
+                    status = 'deviation'
+                elif diff > float(np.tolerance_value) * 0.9:
+                    status = 'warning'
+                else:
+                    status = 'ok'
+            ebr.params.append({
+                'name': np.parameter.parameter_name,
+                'unit': np.parameter.unit,
+                'nominal': float(np.nominal_value),
+                'actual': float(ap.actual_value) if ap and ap.actual_value else None,
+                'max_value': float(ap.max_value) if ap and ap.max_value else None,
+                'status': status,
+            })
+
+        ebr.latest_readings = EquipmentReading.objects.filter(
+            batch=ebr
+        ).order_by('-timestamp')[:5]
+
+        ebr.current_task = task  # последняя (или единственная) задача
+        ebr.pressing_started = ebr.pressing_start_time is not None and ebr.pressing_duration is not None
+        # Проверяем, работает ли ещё пресс
+        if ebr.pressing_start_time and ebr.pressing_duration:
+            now = timezone.now()
+            elapsed = (now - ebr.pressing_start_time).total_seconds()
+            ebr.press_still_running = elapsed < ebr.pressing_duration
+            ebr.press_remaining = max(0, int(ebr.pressing_duration - elapsed))
+        else:
+            ebr.press_still_running = False
+            ebr.press_remaining = 0
+
+    # Сортируем: активные (пресс работает) сверху, затем завершённые/ОКК.
+    # Внутри групп — чем позже оператор взял партию, тем выше.
+    sorted_parties = sorted(
+        active_parties.values(),
+        key=lambda t: (
+            0 if (t.ebr.press_still_running) else 1,
+            -(t.started_at.timestamp() if t.started_at else 0)
+        )
+    )
 
     context = {
         'user': user,
-        'active_tasks': active_tasks,
+        'waiting_ebrs': waiting_ebrs,
+        'active_parties': sorted_parties,
     }
     return render(request, 'users/operator_dashboard.html', context)
 
 
 def technologist_dashboard(request):
     if 'user_id' not in request.session or request.session.get('user_role') != 'технолог':
-        return redirect('login')
+        return redirect('users:login')
 
     from mbr.models import MBR, Product
-    from ebr.models import EBR
+    from ebr.models import EBR, EBRNominalParameter, EBRActualParameter, BatchOperation
     from django.db.models import Max
 
     user = User.objects.get(user_id=request.session['user_id'])
 
     # Только последняя утверждённая версия каждого продукта
-    # Находим max document_id для каждого product_id среди утверждённых
     latest_mbr_ids = MBR.objects.filter(
         status__status_name='Утверждён'
     ).values('product_id').annotate(
         max_doc_id=Max('document_id')
     ).values_list('max_doc_id', flat=True)
-    
+
     approved_mbrs = MBR.objects.filter(
         document_id__in=latest_mbr_ids
     ).select_related('product', 'status', 'signed_by')
-    
+
     products = Product.objects.all()
     ebrs = EBR.objects.all().select_related('status', 'mbr__product').order_by('-start_date')[:10]
+
+    # Активные партии (В работе + В ожидании) с параметрами для мониторинга
+    active_ebrs = EBR.objects.filter(
+        status__status_name__in=['В работе', 'В ожидании']
+    ).select_related('status', 'mbr__product').order_by('-start_date')
+
+    # Для каждой активной партии — параметры с статусом
+    for ebr in active_ebrs:
+        ebr.param_status = []
+        nominal_params = EBRNominalParameter.objects.filter(ebr=ebr).select_related('parameter')
+        actual_params = EBRActualParameter.objects.filter(ebr=ebr).select_related('parameter')
+        worst_status = 'ok'
+
+        for np in nominal_params:
+            ap = actual_params.filter(parameter_id=np.parameter_id).first()
+            status = 'pending'
+
+            if ap and ap.actual_value is not None:
+                diff = abs(float(ap.actual_value) - float(np.nominal_value))
+                if diff > float(np.critical_value):
+                    status = 'critical'
+                    worst_status = 'critical'
+                elif diff > float(np.tolerance_value):
+                    status = 'deviation'
+                    if worst_status not in ('critical',):
+                        worst_status = 'deviation'
+                elif diff > float(np.tolerance_value) * 0.9:
+                    status = 'warning'
+                    if worst_status not in ('critical', 'deviation'):
+                        worst_status = 'warning'
+                else:
+                    status = 'ok'
+
+            ebr.param_status.append({
+                'name': np.parameter.parameter_name,
+                'unit': np.parameter.unit,
+                'nominal': float(np.nominal_value),
+                'actual': float(ap.actual_value) if ap and ap.actual_value else None,
+                'max_value': float(ap.max_value) if ap and ap.max_value else None,
+                'tolerance': float(np.tolerance_value),
+                'critical': float(np.critical_value),
+                'status': status,
+            })
+        ebr.worst_status = worst_status
+
+        # Информация о прессе для уведомления
+        ebr.pressing_started = ebr.pressing_start_time is not None and ebr.pressing_duration is not None
+        if ebr.pressing_start_time and ebr.pressing_duration:
+            now = timezone.now()
+            elapsed = (now - ebr.pressing_start_time).total_seconds()
+            ebr.press_still_running = elapsed < ebr.pressing_duration
+            ebr.press_remaining = max(0, int(ebr.pressing_duration - elapsed))
+            # Проверяем, только что ли закончил (в пределах 5 сек) — для уведомления
+            ebr.just_finished = 0 <= elapsed - ebr.pressing_duration < 5
+        else:
+            ebr.press_still_running = False
+            ebr.press_remaining = 0
+            ebr.just_finished = False
 
     context = {
         'user': user,
         'approved_mbrs': approved_mbrs,
         'products': products,
         'ebrs': ebrs,
+        'active_ebrs': active_ebrs,
     }
     return render(request, 'users/technologist_dashboard.html', context)
+
+
+def _calc_param_status_nominal_actual(np, ap):
+    """Рассчитать статус параметра: ok / warning / deviation / critical"""
+    if ap is None or ap.actual_value is None:
+        return 'pending'
+    value = ap.max_value if ap.max_value else ap.actual_value
+    if np.nominal_value and float(np.nominal_value) > 0:
+        diff = abs(float(value) - float(np.nominal_value))
+        if diff > float(np.critical_value):
+            return 'critical'
+        elif diff > float(np.tolerance_value):
+            return 'deviation'
+        elif diff > float(np.tolerance_value) * 0.9:
+            return 'warning'
+    return 'ok'
+
+
+def ebr_monitoring_api(request, ebr_id):
+    """AJAX endpoint: получить данные мониторинга для партии в реальном времени"""
+    if 'user_id' not in request.session:
+        return JsonResponse({'error': 'Not authenticated'}, status=401)
+
+    try:
+        from ebr.models import EBR, EBRNominalParameter, EBRActualParameter
+        ebr = EBR.objects.select_related('status', 'mbr__product').get(document_id=ebr_id)
+
+        nominal_params = EBRNominalParameter.objects.filter(ebr=ebr).select_related('parameter')
+        actual_params = EBRActualParameter.objects.filter(ebr=ebr).select_related('parameter')
+        param_data = []
+        worst_status = 'ok'
+
+        for np in nominal_params:
+            ap = actual_params.filter(parameter_id=np.parameter_id).first()
+            status = _calc_param_status_nominal_actual(np, ap)
+            if status == 'critical':
+                worst_status = 'critical'
+            elif status == 'deviation' and worst_status not in ('critical',):
+                worst_status = 'deviation'
+            elif status == 'warning' and worst_status not in ('critical', 'deviation'):
+                worst_status = 'warning'
+
+            param_data.append({
+                'name': np.parameter.parameter_name,
+                'unit': np.parameter.unit,
+                'nominal': float(np.nominal_value),
+                'actual': float(ap.actual_value) if ap and ap.actual_value else None,
+                'max_value': float(ap.max_value) if ap and ap.max_value else None,
+                'tolerance': float(np.tolerance_value),
+                'critical': float(np.critical_value),
+                'status': status,
+            })
+
+        return JsonResponse({
+            'success': True,
+            'batch_number': ebr.batch_number,
+            'product': ebr.mbr.product.product_name,
+            'status': ebr.status.status_name,
+            'worst_status': worst_status,
+            'parameters': param_data,
+            'pressing_started': ebr.pressing_start_time is not None and ebr.pressing_duration is not None,
+            'press_still_running': ebr.pressing_start_time is not None and ebr.pressing_duration is not None and
+                ((timezone.now() - ebr.pressing_start_time).total_seconds() < ebr.pressing_duration),
+        })
+    except EBR.DoesNotExist:
+        return JsonResponse({'error': 'EBR not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def technologist_monitoring_api(request):
+    """AJAX endpoint: получить список всех активных EBR для панели технолога"""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'технолог':
+        return JsonResponse({'error': 'Not authenticated'}, status=401)
+
+    from ebr.models import EBR, EBRNominalParameter, EBRActualParameter
+
+    try:
+        active_ebrs = EBR.objects.filter(
+            status__status_name__in=['В работе', 'В ожидании']
+        ).select_related('status', 'mbr__product').order_by('-start_date')
+
+        result = []
+        for ebr in active_ebrs:
+            # Параметры
+            nominal_params = EBRNominalParameter.objects.filter(ebr=ebr).select_related('parameter')
+            actual_params = EBRActualParameter.objects.filter(ebr=ebr).select_related('parameter')
+            param_data = []
+            worst_status = 'ok'
+
+            for np in nominal_params:
+                ap = actual_params.filter(parameter_id=np.parameter_id).first()
+                status = 'pending'
+                if ap and ap.actual_value is not None:
+                    diff = abs(float(ap.actual_value) - float(np.nominal_value))
+                    if diff > float(np.critical_value):
+                        status = 'critical'
+                        worst_status = 'critical'
+                    elif diff > float(np.tolerance_value):
+                        status = 'deviation'
+                        if worst_status not in ('critical',):
+                            worst_status = 'deviation'
+                    elif diff > float(np.tolerance_value) * 0.9:
+                        status = 'warning'
+                        if worst_status not in ('critical', 'deviation'):
+                            worst_status = 'warning'
+                    else:
+                        status = 'ok'
+
+                param_data.append({
+                    'name': np.parameter.parameter_name,
+                    'unit': np.parameter.unit,
+                    'nominal': float(np.nominal_value),
+                    'actual': float(ap.actual_value) if ap and ap.actual_value else None,
+                    'max_value': float(ap.max_value) if ap and ap.max_value else None,
+                    'tolerance': float(np.tolerance_value),
+                    'critical': float(np.critical_value),
+                    'status': status,
+                })
+
+            # Пресс
+            pressing_started = ebr.pressing_start_time is not None and ebr.pressing_duration is not None
+            press_still_running = False
+            press_remaining = 0
+            just_finished = False
+            if ebr.pressing_start_time and ebr.pressing_duration:
+                now = timezone.now()
+                elapsed = (now - ebr.pressing_start_time).total_seconds()
+                press_still_running = elapsed < ebr.pressing_duration
+                press_remaining = max(0, int(ebr.pressing_duration - elapsed))
+                just_finished = 0 <= elapsed - ebr.pressing_duration < 5
+
+            result.append({
+                'document_id': ebr.document_id,
+                'batch_number': ebr.batch_number,
+                'product': ebr.mbr.product.product_name,
+                'status': ebr.status.status_name,
+                'operation_label': ebr.current_operation_label,
+                'worst_status': worst_status,
+                'pressing_started': pressing_started,
+                'press_still_running': press_still_running,
+                'press_remaining': press_remaining,
+                'just_finished': just_finished,
+                'operator': ebr.operator.first_name + ' ' + ebr.operator.last_name if ebr.operator else None,
+                'parameters': param_data,
+            })
+
+        return JsonResponse({'success': True, 'ebrs': result})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def operator_waiting_list_api(request):
+    """AJAX endpoint: список партий, ожидающих оператора"""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'оператор':
+        return JsonResponse({'error': 'Not authenticated'}, status=401)
+
+    from ebr.models import EBR
+
+    try:
+        waiting_ebrs = EBR.objects.filter(
+            status__status_name='В ожидании',
+            operator__isnull=True
+        ).select_related('mbr__product').order_by('-start_date')
+
+        result = [{
+            'document_id': ebr.document_id,
+            'batch_number': ebr.batch_number,
+            'product': ebr.mbr.product.product_name,
+            'start_date': ebr.start_date.isoformat() if ebr.start_date else None,
+        } for ebr in waiting_ebrs]
+
+        return JsonResponse({'success': True, 'waiting_ebrs': result})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def technologist_approved_mbrs_api(request):
+    """AJAX endpoint: список утверждённых MBR для технолога"""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'технолог':
+        return JsonResponse({'error': 'Not authenticated'}, status=401)
+
+    from mbr.models import MBR
+    from django.db.models import Max
+
+    try:
+        latest_mbr_ids = MBR.objects.filter(
+            status__status_name='Утверждён'
+        ).values('product_id').annotate(
+            max_doc_id=Max('document_id')
+        ).values_list('max_doc_id', flat=True)
+
+        approved_mbrs = MBR.objects.filter(
+            document_id__in=latest_mbr_ids
+        ).select_related('product', 'status', 'signed_by').order_by('-created_at')
+
+        result = [{
+            'document_id': mbr.document_id,
+            'product_code': mbr.product.product_code,
+            'product_name': mbr.product.product_name,
+            'version': mbr.version,
+        } for mbr in approved_mbrs]
+
+        return JsonResponse({'success': True, 'approved_mbrs': result})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 def is_ajax(request):
@@ -432,7 +781,7 @@ def chief_technologist_dashboard(request):
                     try:
                         approved_status = MBRStatus.objects.get(status_name='Утверждён')
                         mbr.status = approved_status
-                        mbr.approval_date = datetime.now().date()
+                        mbr.approval_date = timezone.now().date()
                         mbr.signed_by = user
                         mbr.save()
                         messages.success(request, f'MBR для {product.product_code} утверждён')
@@ -448,7 +797,9 @@ def chief_technologist_dashboard(request):
                         user=user,
                         action=action_obj,
                         document=document,
-                        comment=f"Создан MBR для {product.product_code}"
+                        comment=f"Создан MBR {product.product_code} v1 "
+                                f"({product.product_name}). "
+                                f"Создал: {user.last_name} {user.first_name}"
                     )
                 except Exception as e:
                     logger.error(f"Logging error: {e}")
@@ -491,7 +842,7 @@ def chief_technologist_dashboard(request):
 
 def qc_specialist_dashboard(request):
     if 'user_id' not in request.session or request.session.get('user_role') != 'сотрудник ОКК':
-        return redirect('login')
+        return redirect('users:login')
 
     from quality.models import QCTask
 
@@ -500,7 +851,7 @@ def qc_specialist_dashboard(request):
     tasks = QCTask.objects.filter(
         assigned_to=user,
         status__in=['new', 'in_progress']
-    ).select_related('ebr')
+    ).select_related('ebr__mbr__product').order_by('-created_at')
 
     context = {
         'user': user,
@@ -509,55 +860,691 @@ def qc_specialist_dashboard(request):
     return render(request, 'users/qc_specialist_dashboard.html', context)
 
 
+def qc_tasks_api(request):
+    """AJAX endpoint: список заданий ОКК"""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'сотрудник ОКК':
+        return JsonResponse({'error': 'Not authenticated'}, status=401)
+
+    from quality.models import QCTask
+
+    user = User.objects.get(user_id=request.session['user_id'])
+    tasks = QCTask.objects.filter(
+        assigned_to=user,
+        status__in=['new', 'in_progress']
+    ).select_related('ebr__mbr__product').order_by('-created_at')
+
+    result = [{
+        'id': t.id,
+        'batch_number': t.ebr.batch_number,
+        'product': t.ebr.mbr.product.product_name,
+        'task_type': t.get_task_type_display(),
+        'task_type_raw': t.task_type,
+        'status': t.get_status_display(),
+        'status_raw': t.status,
+        'due_date': t.due_date.isoformat() if t.due_date else None,
+        'ebr_id': t.ebr.document_id,
+    } for t in tasks]
+
+    return JsonResponse({'success': True, 'tasks': result})
+
+
+def qc_submit_results(request, task_id):
+    """AJAX endpoint: сохранить результаты ОКК"""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'сотрудник ОКК':
+        return JsonResponse({'error': 'Not authenticated'}, status=401)
+
+    from quality.models import QCTask, QCResult
+    from ebr.models import EBRStatus, EBRActualParameter, Parameter
+    from django.utils import timezone
+    from decimal import Decimal, InvalidOperation
+
+    user = User.objects.get(user_id=request.session['user_id'])
+    task = QCTask.objects.filter(id=task_id, assigned_to=user).select_related('ebr').first()
+
+    if not task:
+        return JsonResponse({'error': 'Task not found'}, status=404)
+
+    if request.method == 'POST':
+        visual_control = request.POST.get('visual_control', '').strip()
+        lab_results = request.POST.get('lab_results', '').strip()
+        comments = request.POST.get('comments', '').strip()
+
+        if not visual_control:
+            return JsonResponse({'error': 'Заполните визуальный контроль'}, status=400)
+        if not lab_results:
+            return JsonResponse({'error': 'Заполните время распадаемости'}, status=400)
+
+        # Сохраняем время распадаемости в EBRActualParameter
+        try:
+            disintegration_value = Decimal(lab_results.replace(',', '.'))
+            disintegration_param = Parameter.objects.filter(
+                parameter_name__icontains='распадаем'
+            ).first()
+            if disintegration_param:
+                ap, _ = EBRActualParameter.objects.get_or_create(
+                    ebr=task.ebr,
+                    parameter=disintegration_param,
+                    defaults={'actual_value': disintegration_value, 'source': 'manual'}
+                )
+                if not _:
+                    ap.actual_value = disintegration_value
+                    ap.source = 'manual'
+                    ap.save(update_fields=['actual_value', 'source'])
+        except (InvalidOperation, ValueError):
+            return JsonResponse({'error': 'Некорректное значение времени распадаемости'}, status=400)
+
+        # Сохраняем результаты
+        QCResult.objects.create(
+            task=task,
+            visual_control=visual_control,
+            lab_results=lab_results,
+            comments=comments,
+            submitted_by=user,
+        )
+
+        # Обновляем задание
+        task.status = 'completed'
+        task.completed_at = timezone.now()
+        task.save(update_fields=['status', 'completed_at'])
+
+        # Пересчитываем статус EBR
+        ebr = task.ebr
+        ebr.recalculate_status()
+
+        # Если после пересчёта всё ОК — отправляем на подписание
+        if ebr.status.status_name != 'Заблокирована':
+            try:
+                completed_status = EBRStatus.objects.get(status_name='Завершена')
+                ebr.status = completed_status
+                ebr.save(update_fields=['status'])
+            except EBRStatus.DoesNotExist:
+                pass
+
+        return JsonResponse({'success': True, 'message': 'Результаты сохранены, партия завершена'})
+
+    return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+
+def _count_current_deviations(ebr):
+    """Считает текущие отклонения по последним значениям параметров."""
+    from ebr.models import EBRActualParameter, EBRNominalParameter
+    count = 0
+    actual_params = EBRActualParameter.objects.filter(ebr=ebr)
+    nominal_params = EBRNominalParameter.objects.filter(ebr=ebr)
+    for ap in actual_params:
+        np = nominal_params.filter(parameter=ap.parameter).first()
+        if np and ap.actual_value is not None:
+            diff = abs(float(ap.actual_value) - float(np.nominal_value))
+            if diff > float(np.critical_value):
+                count += 1
+            elif diff > float(np.tolerance_value):
+                count += 1
+    return count
+
+
+def _has_critical_deviation(ebr):
+    """Проверяет наличие критического отклонения по текущим значениям."""
+    from ebr.models import EBRActualParameter, EBRNominalParameter
+    nominal_params = EBRNominalParameter.objects.filter(ebr=ebr)
+    for np in nominal_params:
+        ap = EBRActualParameter.objects.filter(ebr=ebr, parameter=np.parameter).first()
+        if ap and ap.actual_value is not None:
+            diff = abs(float(ap.actual_value) - float(np.nominal_value))
+            if diff > float(np.critical_value):
+                return True
+    return False
+
+
 def qc_chief_dashboard(request):
     if 'user_id' not in request.session or request.session.get('user_role') != 'начальник ОКК':
-        return redirect('login')
+        return redirect('users:login')
 
-    from quality.models import Deviation
-    from ebr.models import EBR
+    from quality.models import Deviation, QCResult
+    from ebr.models import EBR, EBRStatus
+    from audit.models import AuditLog
 
     user = User.objects.get(user_id=request.session['user_id'])
 
-    pending_review = EBR.objects.filter(status__status_name='В работе').select_related('mbr__product')[:20]
-    deviations = Deviation.objects.filter(action_taken__isnull=True).select_related('ebr', 'detected_by')[:20]
+    # Вкладка 1: Проверка EBR — партии «Завершена» (без подписи) и «Заблокирована» (критические отклонения)
+    pending_review = EBR.objects.filter(
+        status__status_name__in=['Завершена', 'Заблокирована'],
+        signed_by__isnull=True
+    ).select_related('mbr__product', 'status').order_by('-start_date')[:30]
+
+    # Подтягиваем отклонения и QC результаты для каждой партии
+    for ebr in pending_review:
+        ebr.deviation_count = _count_current_deviations(ebr)
+        ebr.has_critical = _has_critical_deviation(ebr)
+        ebr.has_deviation = ebr.deviation_count > 0
+        # QCResult
+        qc_result = QCResult.objects.filter(task__ebr=ebr).first()
+        ebr.qc_visual = qc_result.visual_control if qc_result else None
+        ebr.qc_lab = qc_result.lab_results if qc_result else None
+        ebr.qc_comments = qc_result.comments if qc_result else None
+
+    # Вкладка 2: Архив — партии со статусом «Завершена» или «Заблокирована» где есть решение (подписаны)
+    archived = EBR.objects.filter(
+        status__status_name__in=['Завершена', 'Заблокирована'],
+        signed_by__isnull=False
+    ).select_related('mbr__product', 'signed_by').order_by('-completion_date')[:30]
+
+    for ebr in archived:
+        ebr.qc_result = QCResult.objects.filter(task__ebr=ebr).first()
+        ebr.deviation_count = Deviation.objects.filter(ebr=ebr).count()
+        ebr.has_critical = Deviation.objects.filter(ebr=ebr, deviation_type='critical').exists()
+
+    # Вкладка 3: Аудит
+    audit_logs = AuditLog.objects.all().select_related('user', 'action', 'document').order_by('-timestamp')[:50]
 
     context = {
         'user': user,
         'pending_review': pending_review,
-        'deviations': deviations,
+        'archived': archived,
+        'audit_logs': audit_logs,
     }
     return render(request, 'users/qc_chief_dashboard.html', context)
 
 
+def qc_chief_pending_api(request):
+    """AJAX endpoint: список партий на проверке у начальника ОКК"""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'начальник ОКК':
+        return JsonResponse({'error': 'Not authenticated'}, status=401)
+
+    from quality.models import Deviation, QCResult
+    from ebr.models import EBR
+
+    try:
+        pending = EBR.objects.filter(
+            status__status_name__in=['Завершена', 'Заблокирована'],
+            signed_by__isnull=True
+        ).select_related('mbr__product', 'status').order_by('-start_date')[:30]
+
+        result = []
+        for ebr in pending:
+            qc = QCResult.objects.filter(task__ebr=ebr).first()
+            dev_count = _count_current_deviations(ebr)
+            result.append({
+                'document_id': ebr.document_id,
+                'batch_number': ebr.batch_number,
+                'product': ebr.mbr.product.product_name,
+                'status': ebr.status.status_name,
+                'deviation_count': dev_count,
+                'qc_visual': qc.visual_control if qc else None,
+                'qc_comments': qc.comments if qc else None,
+            })
+
+        return JsonResponse({'success': True, 'pending': result})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def qc_chief_archive_api(request):
+    """AJAX endpoint: архив партий начальника ОКК"""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'начальник ОКК':
+        return JsonResponse({'error': 'Not authenticated'}, status=401)
+
+    from quality.models import QCResult, Deviation
+    from ebr.models import EBR
+
+    try:
+        archived = EBR.objects.filter(
+            status__status_name__in=['Завершена', 'Заблокирована'],
+            signed_by__isnull=False
+        ).select_related('mbr__product', 'signed_by').order_by('-completion_date')[:30]
+
+        result = []
+        for ebr in archived:
+            qc = QCResult.objects.filter(task__ebr=ebr).first()
+            dev_count = Deviation.objects.filter(ebr=ebr).count()
+            has_critical = Deviation.objects.filter(ebr=ebr, deviation_type='critical').exists()
+            result.append({
+                'document_id': ebr.document_id,
+                'batch_number': ebr.batch_number,
+                'product': ebr.mbr.product.product_name,
+                'status': ebr.status.status_name,
+                'completion_date': ebr.completion_date.isoformat() if ebr.completion_date else None,
+                'signed_by': (ebr.signed_by.last_name + ' ' + ebr.signed_by.first_name) if ebr.signed_by else '—',
+                'deviation_count': dev_count,
+                'has_critical': has_critical,
+                'qc_visual': qc.visual_control if qc else None,
+                'qc_comments': qc.comments if qc else None,
+            })
+
+        return JsonResponse({'success': True, 'archived': result})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def ebr_reject(request, pk):
+    """Начальник ОКК отклоняет EBR."""
+    from ebr.models import EBR, EBRStatus
+    from django.utils import timezone
+
+    if 'user_id' not in request.session or request.session.get('user_role') != 'начальник ОКК':
+        return redirect('users:login')
+
+    ebr = get_object_or_404(EBR, document_id=pk)
+
+    if request.method == 'POST':
+        try:
+            blocked_status = EBRStatus.objects.get(status_name='Заблокирована')
+        except EBRStatus.DoesNotExist:
+            messages.error(request, 'Статус "Заблокирована" не найден')
+            return redirect('users:qc_chief_dashboard')
+
+        ebr.status = blocked_status
+        ebr.signed_by = request.current_user
+        ebr.completion_date = timezone.now()
+        ebr.save(update_fields=['status', 'signed_by', 'completion_date'])
+
+        from audit.models import Action, AuditLog
+        try:
+            action = Action.objects.get(action_name='Отклонение EBR')
+        except Action.DoesNotExist:
+            action = Action.objects.create(action_name='Отклонение EBR')
+
+        AuditLog.objects.create(
+            user=request.current_user,
+            action=action,
+            document=ebr.document,
+            comment=f"EBR {ebr.batch_number} отклонён"
+        )
+
+        messages.success(request, f'Партия {ebr.batch_number} отклонена')
+
+    return redirect('users:qc_chief_dashboard')
+
+
 def director_dashboard(request):
     if 'user_id' not in request.session or request.session.get('user_role') != 'директор':
-        return redirect('login')
+        return redirect('users:login')
 
     from reports.models import GeneratedReport
-    from ebr.models import EBR
+    from ebr.models import EBR, EBRStatus, EBRActualParameter, EBRNominalParameter
     from quality.models import Deviation
-    from django.db.models import Count, Sum
+    from mbr.models import Product
+    from django.db.models import Count
     from datetime import datetime, timedelta
+    import os, uuid
+    from django.conf import settings
 
     user = User.objects.get(user_id=request.session['user_id'])
 
-    # Статистика за месяц
-    month_ago = datetime.now() - timedelta(days=30)
+    # === Синхронизация Deviation из EBR при каждой загрузке ===
+    def _sync_deviations_from_ebr():
+        """Анализирует все EBR и заполняет таблицу Deviation."""
+        from ebr.models import EBRActualParameter, EBRNominalParameter
+        
+        # Удаляем только те Deviation, которые созданы этой функцией (с description содержащим "diff=")
+        # Deviation из quality/views.py (время распадаемости) останутся
+        Deviation.objects.filter(description__contains='diff=').delete()
+        
+        ebrs = EBR.objects.all().prefetch_related('operations')
+        for ebr in ebrs:
+            actual_params = EBRActualParameter.objects.filter(ebr=ebr)
+            for ap in actual_params:
+                if ap.actual_value is None:
+                    continue
+                try:
+                    nominal = EBRNominalParameter.objects.get(ebr=ebr, parameter=ap.parameter)
+                except EBRNominalParameter.DoesNotExist:
+                    continue
 
-    total_batches = EBR.objects.filter(start_date__gte=month_ago).count()
-    completed_batches = EBR.objects.filter(start_date__gte=month_ago, status__status_name='Завершена').count()
-    total_deviations = Deviation.objects.filter(detected_at__gte=month_ago).count()
+                diff = abs(float(ap.actual_value) - float(nominal.nominal_value))
+                tol = float(nominal.tolerance_value)
+                crit = float(nominal.critical_value)
 
-    recent_reports = GeneratedReport.objects.filter(
-        generated_by=user
-    ).order_by('-generated_at')[:10]
+                # Определяем тип отклонения
+                dev_type = None
+                if crit > 0 and diff > crit:
+                    dev_type = 'critical'
+                elif tol > 0 and diff > tol:
+                    dev_type = 'deviation'
+                elif tol > 0 and diff > tol * 0.9:
+                    dev_type = 'warning'
+
+                if dev_type:
+                    Deviation.objects.create(
+                        ebr=ebr,
+                        deviation_type=dev_type,
+                        parameter_name=nominal.parameter.parameter_name,
+                        expected_value=nominal.nominal_value,
+                        actual_value=ap.actual_value,
+                        tolerance=nominal.tolerance_value,
+                        description=f"{dev_type}: diff={diff:.2f}",
+                        detected_at=ebr.start_date,
+                    )
+
+    _sync_deviations_from_ebr()
+    # ============================================================
+
+    # Фильтр по датам (GET-параметры для графиков)
+    filter_start = request.GET.get('start_date')
+    filter_end = request.GET.get('end_date')
+
+    # Определяем период: по умолчанию последние 30 дней
+    try:
+        if filter_start and filter_end:
+            period_start = datetime.strptime(filter_start, '%Y-%m-%d')
+            period_end = datetime.strptime(filter_end, '%Y-%m-%d')
+        else:
+            period_end = timezone.now()
+            period_start = period_end - timedelta(days=30)
+    except (ValueError, TypeError):
+        period_end = timezone.now()
+        period_start = period_end - timedelta(days=30)
+
+    month_ago = period_start
+
+    # Обработка POST (генерация отчётов)
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'generate_report':
+            report_type = request.POST.get('report_type', 'production')
+            start_date = request.POST.get('start_date')
+            end_date = request.POST.get('end_date')
+            fmt = request.POST.get('format', 'excel')
+
+            try:
+                sd = datetime.strptime(start_date, '%d.%m.%Y')
+                ed = datetime.strptime(end_date, '%d.%m.%Y')
+            except (ValueError, TypeError):
+                try:
+                    sd = datetime.strptime(start_date, '%Y-%m-%d')
+                    ed = datetime.strptime(end_date, '%Y-%m-%d')
+                except (ValueError, TypeError):
+                    sd = month_ago
+                    ed = timezone.now()
+
+            # Генерируем отчёт
+            from reports.views import _generate_report_data
+            data = _generate_report_data(report_type, sd, ed)
+
+            filename = f"report_{report_type}_{uuid.uuid4().hex[:8]}"
+            if fmt == 'excel':
+                from openpyxl import Workbook
+                from openpyxl.styles import Font, Alignment, PatternFill
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Отчёт"
+
+                def sanitize_for_excel(val):
+                    """Убирает timezone из datetime для openpyxl."""
+                    import datetime as dt_module
+                    if isinstance(val, dt_module.datetime) and val.tzinfo is not None:
+                        return val.replace(tzinfo=None)
+                    if isinstance(val, dt_module.date) and not isinstance(val, dt_module.datetime):
+                        return val
+                    return val
+
+                row_num = 1
+
+                # Заголовок отчёта
+                title_font = Font(bold=True, size=14)
+                header_font = Font(bold=True)
+                header_fill = PatternFill(start_color="2a83bd", end_color="2a83bd", fill_type="solid")
+                header_font_white = Font(bold=True, color="FFFFFF")
+
+                if report_type == 'production':
+                    ws.cell(row=row_num, column=1, value=f"Отчёт по выпуску продукции за период {sd.strftime('%d.%m.%Y')} — {ed.strftime('%d.%m.%Y')}").font = title_font
+                    ws.merge_cells(f'A{row_num}:G{row_num}')
+                    row_num += 2
+
+                    # Сводка
+                    ws.cell(row=row_num, column=1, value="Сводка по продуктам").font = Font(bold=True, size=12)
+                    row_num += 1
+                    for col, h in enumerate(data.get('summary_headers', []), 1):
+                        cell = ws.cell(row=row_num, column=col, value=h)
+                        cell.font = header_font
+                        cell.fill = header_fill
+                        cell.font = header_font_white
+                    row_num += 1
+                    for rrow in data.get('summary_rows', []):
+                        for col, val in enumerate(rrow, 1):
+                            ws.cell(row=row_num, column=col, value=sanitize_for_excel(val))
+                        row_num += 1
+
+                    row_num += 2
+                    ws.cell(row=row_num, column=1, value=f"Итого партий: {data.get('total', 0)}  |  Завершено: {data.get('completed', 0)}  |  Заблокировано: {data.get('blocked', 0)}  |  Брак: {data.get('defect_pct', 0)}%").font = Font(bold=True)
+                    row_num += 2
+
+                    # Детализация
+                    ws.cell(row=row_num, column=1, value="Детализация по партиям").font = Font(bold=True, size=12)
+                    row_num += 1
+                    for col, h in enumerate(data.get('headers', []), 1):
+                        cell = ws.cell(row=row_num, column=col, value=h)
+                        cell.font = header_font_white
+                        cell.fill = header_fill
+                    row_num += 1
+                    for rrow in data.get('rows', []):
+                        for col, val in enumerate(rrow, 1):
+                            ws.cell(row=row_num, column=col, value=sanitize_for_excel(val))
+                        row_num += 1
+
+                elif report_type == 'deviation':
+                    ws.cell(row=row_num, column=1, value=f"Отчёт по отклонениям за период {sd.strftime('%d.%m.%Y')} — {ed.strftime('%d.%m.%Y')}").font = title_font
+                    ws.merge_cells(f'A{row_num}:J{row_num}')
+                    row_num += 2
+
+                    ws.cell(row=row_num, column=1, value=f"Всего отклонений: {data.get('total_deviations', 0)}").font = Font(bold=True)
+                    row_num += 2
+
+                    by_type = data.get('by_type', {})
+                    type_labels = {'warning': 'Предупреждение', 'deviation': 'Отклонение', 'critical': 'Критическое отклонение'}
+                    for dtype, label in type_labels.items():
+                        ws.cell(row=row_num, column=1, value=f"{label}: {by_type.get(dtype, 0)}")
+                        row_num += 1
+
+                    row_num += 1
+                    # Таблица отклонений
+                    for col, h in enumerate(data.get('headers', []), 1):
+                        cell = ws.cell(row=row_num, column=col, value=h)
+                        cell.font = header_font_white
+                        cell.fill = header_fill
+                    row_num += 1
+                    for rrow in data.get('rows', []):
+                        for col, val in enumerate(rrow, 1):
+                            ws.cell(row=row_num, column=col, value=sanitize_for_excel(val))
+                        row_num += 1
+
+                elif report_type == 'efficiency':
+                    ws.cell(row=row_num, column=1, value=f"Отчёт по эффективности за период {sd.strftime('%d.%m.%Y')} — {ed.strftime('%d.%m.%Y')}").font = title_font
+                    ws.merge_cells(f'A{row_num}:B{row_num}')
+                    row_num += 2
+
+                    metrics = [
+                        ('Всего партий', data.get('total_batches', 0)),
+                        ('Завершено', data.get('completed', 0)),
+                        ('Заблокировано', data.get('blocked', 0)),
+                        ('В работе', data.get('in_progress', 0)),
+                        ('В ожидании', data.get('waiting', 0)),
+                        ('Эффективность', f"{data.get('efficiency', 0)}%"),
+                        ('Процент брака', f"{data.get('defect_rate', 0)}%"),
+                    ]
+                    for label, value in metrics:
+                        ws.cell(row=row_num, column=1, value=label).font = Font(bold=True)
+                        ws.cell(row=row_num, column=2, value=value)
+                        row_num += 1
+
+                filepath = os.path.join(settings.MEDIA_ROOT, 'reports', f"{filename}.xlsx")
+                os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                wb.save(filepath)
+                file_rel = os.path.join('reports', f"{filename}.xlsx")
+            else:
+                import csv
+                import datetime as dt_module
+
+                def sanitize_for_excel(val):
+                    if isinstance(val, dt_module.datetime) and val.tzinfo is not None:
+                        return val.replace(tzinfo=None)
+                    if isinstance(val, dt_module.date) and not isinstance(val, dt_module.datetime):
+                        return val
+                    return val
+
+                filepath = os.path.join(settings.MEDIA_ROOT, 'reports', f"{filename}.csv")
+                os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+                    writer = csv.writer(f)
+                    if report_type == 'production':
+                        writer.writerow([f"Отчёт по выпуску продукции за период {sd.strftime('%d.%m.%Y')} — {ed.strftime('%d.%m.%Y')}"])
+                        writer.writerow([])
+                        writer.writerow(data.get('summary_headers', []))
+                        for rrow in data.get('summary_rows', []):
+                            writer.writerow(rrow)
+                        writer.writerow([])
+                        writer.writerow([f"Итого: {data.get('total', 0)} партий, завершено {data.get('completed', 0)}, заблокировано {data.get('blocked', 0)}, брак {data.get('defect_pct', 0)}%"])
+                        writer.writerow([])
+                        writer.writerow(data.get('headers', []))
+                        for rrow in data.get('rows', []):
+                            writer.writerow([sanitize_for_excel(v) for v in rrow])
+                    elif report_type == 'deviation':
+                        writer.writerow([f"Отчёт по отклонениям за период {sd.strftime('%d.%m.%Y')} — {ed.strftime('%d.%m.%Y')}"])
+                        writer.writerow([f"Всего отклонений: {data.get('total_deviations', 0)}"])
+                        writer.writerow([])
+                        writer.writerow(data.get('headers', []))
+                        for rrow in data.get('rows', []):
+                            writer.writerow([sanitize_for_excel(v) for v in rrow])
+                    elif report_type == 'efficiency':
+                        writer.writerow([f"Отчёт по эффективности за период {sd.strftime('%d.%m.%Y')} — {ed.strftime('%d.%m.%Y')}"])
+                        writer.writerow([])
+                        for label, value in [
+                            ('Всего партий', data.get('total_batches', 0)),
+                            ('Завершено', data.get('completed', 0)),
+                            ('Заблокировано', data.get('blocked', 0)),
+                            ('В работе', data.get('in_progress', 0)),
+                            ('В ожидании', data.get('waiting', 0)),
+                            ('Эффективность', f"{data.get('efficiency', 0)}%"),
+                            ('Процент брака', f"{data.get('defect_rate', 0)}%"),
+                        ]:
+                            writer.writerow([label, value])
+                file_rel = os.path.join('reports', f"{filename}.csv")
+
+            # Создаём или получаем шаблон
+            from reports.models import ReportTemplate
+            try:
+                template = ReportTemplate.objects.get(report_type=report_type)
+            except ReportTemplate.DoesNotExist:
+                template = ReportTemplate.objects.create(
+                    report_type=report_type,
+                    name=f'Отчёт {report_type}',
+                    is_active=True,
+                )
+
+            GeneratedReport.objects.create(
+                template=template,
+                generated_by=user,
+                start_date=sd,
+                end_date=ed,
+                format=fmt,
+                file=file_rel
+            )
+            messages.success(request, 'Отчёт сгенерирован')
+            return redirect('users:director_dashboard')
+
+    # KPI при загрузке страницы — только подписанные (Завершена/Заблокирована + signed_by)
+    total_batches = EBR.objects.filter(
+        status__status_name__in=['Завершена', 'Заблокирована'],
+        signed_by__isnull=False,
+        start_date__gte=month_ago
+    ).count()
+    completed_batches = EBR.objects.filter(
+        start_date__gte=month_ago, status__status_name='Завершена', signed_by__isnull=False
+    ).count()
+    blocked_batches = EBR.objects.filter(
+        start_date__gte=month_ago, status__status_name='Заблокирована', signed_by__isnull=False
+    ).count()
+
+    # Отклонения за период — прямой запрос через ebr__start_date
+    dev_kwargs_main = {}
+    dev_kwargs_main['ebr__start_date__date__gte'] = month_ago
+    total_deviations = Deviation.objects.filter(**dev_kwargs_main).count()
+
+    defect_rate = 0
+    if total_batches > 0:
+        defect_rate = round((blocked_batches / total_batches) * 100, 1)
+
+    efficiency = 0
+    if total_batches > 0:
+        efficiency = round((completed_batches / total_batches) * 100, 1)
+
+    monthly_stats = {
+        'batches': total_batches,
+        'defect_rate': defect_rate,
+        'deviations': total_deviations,
+        'efficiency': efficiency,
+    }
+
+    # Статистика по продуктам
+    products = Product.objects.all()
+    product_stats = []
+    for p in products:
+        p_batches = EBR.objects.filter(mbr__product=p, start_date__gte=month_ago).count()
+        p_blocked = EBR.objects.filter(mbr__product=p, start_date__gte=month_ago, status__status_name='Заблокирована').count()
+        p_defect = round((p_blocked / p_batches * 100), 1) if p_batches > 0 else 0
+        product_stats.append({
+            'product_name': p.product_name,
+            'batches': p_batches,
+            'defect_rate': p_defect,
+        })
+
+    # Статистика по отклонениям — прямой запрос через ebr__start_date
+    deviation_stats = {}
+    dev_kwargs_main = {}
+    if month_ago:
+        dev_kwargs_main['ebr__start_date__date__gte'] = month_ago
+    from django.db.models import Count
+    for item in Deviation.objects.filter(**dev_kwargs_main).values('deviation_type').annotate(cnt=Count('id')):
+        deviation_stats[item['deviation_type']] = item['cnt']
+
+    deviation_stats_labeled = {}
+    total_deviations = 0
+    for dtype, label in [('warning', 'Предупреждение'), ('deviation', 'Отклонение'), ('critical', 'Критическое отклонение')]:
+        cnt = deviation_stats.get(dtype, 0)
+        deviation_stats_labeled[label] = cnt
+        total_deviations += cnt
+
+    # Процент от общего числа отклонений — список кортежей для шаблона
+    deviation_rows = []
+    for dtype, label in [('warning', 'Предупреждение'), ('deviation', 'Отклонение'), ('critical', 'Критическое отклонение')]:
+        cnt = deviation_stats.get(dtype, 0)
+        pct = round((cnt / total_deviations * 100), 1) if total_deviations > 0 else 0
+        deviation_rows.append({'type': label, 'count': cnt, 'pct': pct})
+
+    recent_reports = GeneratedReport.objects.filter(generated_by=user).order_by('-generated_at')[:6]
+
+    # Начальные данные для графиков
+    initial_stats = {
+        'product_chart': [],
+        'status_chart': {},
+    }
+    for p in products:
+        cnt = EBR.objects.filter(mbr__product=p, start_date__gte=month_ago).count()
+        if cnt > 0:
+            initial_stats['product_chart'].append({
+                'product_code': p.product_code,
+                'product_name': p.product_name,
+                'count': cnt,
+            })
+    for status_name in ['Завершена', 'Заблокирована', 'В работе', 'В ожидании']:
+        cnt = EBR.objects.filter(status__status_name=status_name, start_date__gte=month_ago).count()
+        if cnt > 0:
+            initial_stats['status_chart'][status_name] = cnt
 
     context = {
         'user': user,
-        'total_batches': total_batches,
-        'completed_batches': completed_batches,
+        'monthly_stats': monthly_stats,
+        'product_stats': product_stats,
+        'deviation_stats': deviation_stats_labeled,
+        'deviation_rows': deviation_rows,
         'total_deviations': total_deviations,
         'recent_reports': recent_reports,
+        # Для отображения в фильтре (ДД.ММ.ГГГГ)
+        'filter_start': period_start.strftime('%d.%m.%Y'),
+        'filter_end': period_end.strftime('%d.%m.%Y'),
+        # Для input type="date" (YYYY-MM-DD)
+        'filter_start_iso': period_start.strftime('%Y-%m-%d'),
+        'filter_end_iso': period_end.strftime('%Y-%m-%d'),
+        'initial_stats_json': json.dumps(initial_stats, ensure_ascii=False),
     }
     return render(request, 'users/director_dashboard.html', context)
 
@@ -893,7 +1880,9 @@ def approve_mbr_api(request, mbr_id):
                 user_id=request.session['user_id'],
                 action=action,
                 document=mbr.document,
-                comment=f"Утверждён MBR {mbr.product.product_code} v{mbr.version}"
+                comment=f"Утверждён MBR {mbr.product.product_code} {mbr.version} "
+                        f"({mbr.product.product_name}). "
+                        f"Утвердил: {request.current_user.last_name} {request.current_user.first_name}"
             )
         except Exception as e:
             logger.error(f"Logging error: {e}")
@@ -906,3 +1895,108 @@ def approve_mbr_api(request, mbr_id):
         return JsonResponse({'error': 'Approved status not found'}, status=500)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
+
+def director_stats_api(request):
+    """API: данные для графиков и KPI панели директора."""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'директор':
+        return JsonResponse({'error': 'Доступ запрещён'}, status=403)
+
+    from ebr.models import EBR, EBRStatus
+    from mbr.models import Product
+
+    # Фильтр по датам
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+
+    kwargs = {}
+    if start_date:
+        try:
+            sd = datetime.datetime.strptime(start_date, '%Y-%m-%d').date()
+            kwargs['start_date__date__gte'] = sd
+        except ValueError:
+            return JsonResponse({'error': 'Неверный формат start_date'}, status=400)
+    if end_date:
+        try:
+            ed = datetime.datetime.strptime(end_date, '%Y-%m-%d').date()
+            kwargs['start_date__date__lte'] = ed
+        except ValueError:
+            return JsonResponse({'error': 'Неверный формат end_date'}, status=400)
+
+    # KPI: только партии по которым принято решение (статус Завершена/Заблокирована + подписаны)
+    total_signed = EBR.objects.filter(
+        status__status_name__in=['Завершена', 'Заблокирована'],
+        signed_by__isnull=False,
+        **kwargs
+    ).count()
+    completed_signed = EBR.objects.filter(status__status_name='Завершена', signed_by__isnull=False, **kwargs).count()
+    blocked_signed = EBR.objects.filter(status__status_name='Заблокирована', signed_by__isnull=False, **kwargs).count()
+
+    defect_rate = round((blocked_signed / total_signed * 100), 1) if total_signed > 0 else 0
+    efficiency = round((completed_signed / total_signed * 100), 1) if total_signed > 0 else 0
+
+    # Отклонения за период — прямой запрос к Deviation через ebr__start_date
+    from quality.models import Deviation
+    from django.db.models import Count
+    dev_kwargs = {}
+    if 'start_date__date__gte' in kwargs:
+        dev_kwargs['ebr__start_date__date__gte'] = kwargs['start_date__date__gte']
+    if 'start_date__date__lte' in kwargs:
+        dev_kwargs['ebr__start_date__date__lte'] = kwargs['start_date__date__lte']
+    
+    total_deviations = 0
+    deviation_by_type = {'warning': 0, 'deviation': 0, 'critical': 0}
+    qs = Deviation.objects.filter(**dev_kwargs)
+    for item in qs.values('deviation_type').annotate(cnt=Count('id')):
+        deviation_by_type[item['deviation_type']] = item['cnt']
+        total_deviations += item['cnt']
+
+    # 1. Круговая: выпуск по продуктам
+    product_counts = []
+    products = Product.objects.all()
+    for p in products:
+        cnt = EBR.objects.filter(mbr__product=p, **kwargs).count()
+        if cnt > 0:
+            product_counts.append({
+                'product_code': p.product_code,
+                'product_name': p.product_name,
+                'count': cnt,
+            })
+
+    # 2. Гистограмма: партии по статусам
+    status_counts = {}
+    for status_name in ['Завершена', 'Заблокирована', 'В работе', 'В ожидании']:
+        cnt = EBR.objects.filter(status__status_name=status_name, **kwargs).count()
+        if cnt > 0:
+            status_counts[status_name] = cnt
+
+    # 3. Отклонения — прямой запрос через ebr__start_date
+    dev_kwargs_api = {}
+    if 'start_date__date__gte' in kwargs:
+        dev_kwargs_api['ebr__start_date__date__gte'] = kwargs['start_date__date__gte']
+    if 'start_date__date__lte' in kwargs:
+        dev_kwargs_api['ebr__start_date__date__lte'] = kwargs['start_date__date__lte']
+
+    deviation_stats = {}
+    qs_api = Deviation.objects.filter(**dev_kwargs_api)
+    for item in qs_api.values('deviation_type').annotate(cnt=Count('id')):
+        deviation_stats[item['deviation_type']] = item['cnt']
+
+    # Маппинг на русские label
+    deviation_by_label = {}
+    for dtype, label in [('warning', 'Предупреждение'), ('deviation', 'Отклонение'), ('critical', 'Критическое отклонение')]:
+        cnt = deviation_stats.get(dtype, 0)
+        if cnt > 0:
+            deviation_by_label[label] = cnt
+
+    return JsonResponse({
+        'kpi': {
+            'batches': total_signed,
+            'defect_rate': defect_rate,
+            'deviations': total_deviations,
+            'efficiency': efficiency,
+        },
+        'product_chart': product_counts,
+        'status_chart': status_counts,
+        'deviation_stats': deviation_by_label,
+    })

@@ -173,7 +173,6 @@
 
         <div class="action-buttons">
             <button type="submit" name="save_draft" value="1" class="btn-success">Сохранить черновик</button>
-            <button type="submit" name="approve" value="1" class="btn-success">Утвердить MBR</button>
         </div>
     </form>
 </div>
@@ -447,12 +446,10 @@ window.editMbr = function(mbrId) {
                 if (criticalInput) criticalInput.value = param.critical;
             });
 
-            // Меняем текст кнопок
+            // Меняем текст кнопки
             const saveBtn = document.querySelector('button[name="save_draft"]');
-            const approveBtn = document.querySelector('button[name="approve"]');
 
             saveBtn.textContent = 'Обновить черновик';
-            approveBtn.style.display = 'none';  // Скрываем кнопку утверждения при редактировании
         })
         .catch(error => {
             alert('Ошибка при загрузке данных для редактирования: ' + error.message);
@@ -575,12 +572,10 @@ window.resetMbrForm = function() {
     const tbody = document.getElementById('selected-raw-materials');
     if (tbody) tbody.innerHTML = '';
 
-    // Возвращаем кнопки в исходное состояние
+    // Возвращаем кнопку в исходное состояние
     const saveBtn = document.querySelector('button[name="save_draft"]');
-    const approveBtn = document.querySelector('button[name="approve"]');
 
     if (saveBtn) saveBtn.textContent = 'Сохранить черновик';
-    if (approveBtn) approveBtn.style.display = 'inline-block';
 
     // Сбрасываем параметры к значениям по умолчанию - ИСПРАВЛЕНО
     {% for param in parameters %}
