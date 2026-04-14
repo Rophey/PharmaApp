@@ -115,9 +115,11 @@
                 {% if 'распадаем' in item.nominal.parameter.parameter_name|lower %}
                 <div class="form-group" style="margin-top: 10px;">
                     <label>Время распадаемости ({{ item.nominal.parameter.unit }}):</label>
-                    <input type="text" name="disintegration_time"
+                    <input type="text" name="disintegration_time" id="disintegration-time"
                            placeholder="Например: 15"
-                           style="width: 150px;">
+                           style="width: 150px;"
+                           oninput="validateDisintegrationTime(this)">
+                    <div class="error-message" id="disintegration-error"></div>
                     <span style="margin-left: 10px; color: #7f8c8d;">
                         (номинал: {{ item.nominal.nominal_value }}, допуск: ±{{ item.nominal.tolerance_value }}, крит.: ±{{ item.nominal.critical_value }})
                     </span>
@@ -130,7 +132,7 @@
                 <input type="file" id="qc_files" name="qc_files" multiple>
             </div>
 
-            <button type="submit" class="btn btn-success">Отправить результаты</button>
+            <button type="submit" class="btn btn-success" id="qc-submit-btn">Отправить результаты</button>
         </form>
     </div>
     {% endif %}
@@ -169,5 +171,52 @@ function validateTextField(fieldId, errorId) {
 }
 document.getElementById('visual_control')?.addEventListener('blur', function() { validateTextField('visual_control', 'visual-error'); });
 document.getElementById('lab_results')?.addEventListener('blur', function() { validateTextField('lab_results', 'lab-error'); });
+
+// Валидация времени распадаемости: >0 и <=4320
+function validateDisintegrationTime(input) {
+    const value = input.value.replace(',', '.').trim();
+    const error = document.getElementById('disintegration-error');
+    const submitBtn = document.getElementById('qc-submit-btn');
+    if (!value) {
+        input.classList.remove('error');
+        error.textContent = '';
+        if (submitBtn) submitBtn.disabled = false;
+        return true;
+    }
+    const num = parseFloat(value);
+    if (isNaN(num)) {
+        input.classList.add('error');
+        error.textContent = 'Введите числовое значение';
+        if (submitBtn) submitBtn.disabled = true;
+        return false;
+    }
+    if (num <= 0) {
+        input.classList.add('error');
+        error.textContent = 'Значение должно быть больше 0';
+        if (submitBtn) submitBtn.disabled = true;
+        return false;
+    }
+    if (num > 4320) {
+        input.classList.add('error');
+        error.textContent = 'Значение не может превышать 4320 мин (72 часа)';
+        if (submitBtn) submitBtn.disabled = true;
+        return false;
+    }
+    input.classList.remove('error');
+    error.textContent = '';
+    if (submitBtn) submitBtn.disabled = false;
+    return true;
+}
+
+// Блокируем отправку формы при невалидном времени распадаемости
+document.querySelector('form[action*="qc_submit_results"]')?.addEventListener('submit', function(e) {
+    const disInput = document.getElementById('disintegration-time');
+    if (disInput && disInput.value.trim()) {
+        if (!validateDisintegrationTime(disInput)) {
+            e.preventDefault();
+            disInput.focus();
+        }
+    }
+});
 </script>
 {% endblock %}

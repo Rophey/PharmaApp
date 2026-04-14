@@ -38,4 +38,8 @@ urlpatterns = [
 
     # API для панели директора
     path('api/director-stats/', views.director_stats_api, name='director_stats_api'),
+
+    # API для администратора (справочники)
+    path('api/admin/raw-materials/', views.api_admin_raw_materials, name='api_admin_raw_materials'),
+    path('api/admin/products/', views.api_admin_products, name='api_admin_products'),
 ]

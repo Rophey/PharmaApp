@@ -7,7 +7,6 @@
 
 <div class="nav-tabs">
     <div class="nav-tab active" data-tab="users">Управление пользователями</div>
-    <div class="nav-tab" data-tab="settings">Системные настройки</div>
     <div class="nav-tab" data-tab="reference">Справочники</div>
 </div>
 
@@ -15,33 +14,48 @@
 <div class="tab-content active" id="users-tab">
     <div class="card">
         <h3>Добавление нового пользователя</h3>
-        <form method="post" action="{% url 'users:admin_dashboard' %}">
+        <form method="post" action="{% url 'users:admin_dashboard' %}" id="create-user-form">
             {% csrf_token %}
             <input type="hidden" name="action" value="create_user">
 
             <div class="form-group">
                 <label>Логин (8-15 символов, латиница, цифры, _)</label>
-                <input type="text" name="login" required pattern="[a-zA-Z0-9_]{8,15}">
+                <input type="text" name="login" id="new-login" required
+                       placeholder="Введите логин"
+                       oninput="validateLogin(this)">
+                <div class="error-message" id="login-error"></div>
             </div>
 
             <div class="form-group">
                 <label>Пароль (8-15 символов, латиница, цифры, спецсимволы)</label>
-                <input type="password" name="password" required>
+                <input type="password" name="password" id="new-password" required
+                       placeholder="Введите пароль"
+                       oninput="validatePassword(this)">
+                <div class="error-message" id="password-error"></div>
             </div>
 
             <div class="form-group">
                 <label>Фамилия</label>
-                <input type="text" name="last_name" required>
+                <input type="text" name="last_name" id="new-lastname" required
+                       placeholder="Введите фамилию"
+                       oninput="validateFIO(this)">
+                <div class="error-message" id="lastname-error"></div>
             </div>
 
             <div class="form-group">
                 <label>Имя</label>
-                <input type="text" name="first_name" required>
+                <input type="text" name="first_name" id="new-firstname" required
+                       placeholder="Введите имя"
+                       oninput="validateFIO(this)">
+                <div class="error-message" id="firstname-error"></div>
             </div>
 
             <div class="form-group">
                 <label>Отчество</label>
-                <input type="text" name="middle_name">
+                <input type="text" name="middle_name" id="new-middlename"
+                       placeholder="Введите отчество (необязательно)"
+                       oninput="validateFIO(this)">
+                <div class="error-message" id="middlename-error"></div>
             </div>
 
             <div class="form-group">
@@ -57,7 +71,7 @@
                 </select>
             </div>
 
-            <button type="submit" class="btn-success">Создать пользователя</button>
+            <button type="submit" class="btn-success" id="create-user-btn" disabled>Создать пользователя</button>
         </form>
     </div>
 
@@ -87,12 +101,22 @@
                 <td>{{ u.created_at|date:"d.m.Y" }}</td>
                 <td>
                     <div class="action-buttons">
-                        <button class="action-btn" onclick="editUser({{ u.user_id }})">Редактировать</button>
-                        {% if u.is_active %}
-                            <button class="action-btn btn-danger" onclick="toggleUser({{ u.user_id }})">Деактивировать</button>
-                        {% else %}
-                            <button class="action-btn btn-success" onclick="toggleUser({{ u.user_id }})">Активировать</button>
-                        {% endif %}
+                        <form method="post" style="display:inline;" onsubmit="return confirm('Изменить статус пользователя {{ u.login }}?')">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="toggle_user">
+                            <input type="hidden" name="user_id" value="{{ u.user_id }}">
+                            {% if u.is_active %}
+                                <button type="submit" class="action-btn btn-danger">Деактивировать</button>
+                            {% else %}
+                                <button type="submit" class="action-btn btn-success">Активировать</button>
+                            {% endif %}
+                        </form>
+                        <form method="post" style="display:inline;" onsubmit="return confirm('Удалить пользователя {{ u.login }}? Это действие необратимо.')">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="delete_user">
+                            <input type="hidden" name="user_id" value="{{ u.user_id }}">
+                            <button type="submit" class="action-btn btn-danger">Удалить</button>
+                        </form>
                     </div>
                 </td>
             </tr>
@@ -101,209 +125,314 @@
     </table>
 </div>
 
-<!-- Вкладка 2: Системные настройки -->
-<div class="tab-content" id="settings-tab">
-    <div class="system-config">
-        <div class="card">
-            <h4>Правила генерации номеров партий</h4>
-            <div class="form-group">
-                <label>Шаблон</label>
-                <select name="batch_number_rule" onchange="saveSetting('batch_rule', this.value)">
-                    <option value="B-YYYY-XXX" {% if settings.batch_rule == 'B-YYYY-XXX' %}selected{% endif %}>B-ГГГГ-XXX (B-2026-001)</option>
-                    <option value="PRODUCT-YYMMDD-XXX" {% if settings.batch_rule == 'PRODUCT-YYMMDD-XXX' %}selected{% endif %}>ПРОДУКТ-ГГММДД-XXX (ASP-250316-001)</option>
-                    <option value="YYMMDD-XXX-PRODUCT" {% if settings.batch_rule == 'YYMMDD-XXX-PRODUCT' %}selected{% endif %}>ГГММДД-XXX-ПРОДУКТ (250316-001-ASP)</option>
-                </select>
-            </div>
-        </div>
+<!-- Вкладка 2: Справочники (обе таблицы без подвкладок) -->
+<div class="tab-content" id="reference-tab">
+    <h3>Справочник сырья</h3>
+    <button class="btn-success" onclick="openRawMaterialModal()" style="margin-bottom:10px;">Добавить сырьё</button>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Наименование</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for material in raw_materials %}
+            <tr>
+                <td>{{ material.pk }}</td>
+                <td>{{ material.material_name }}</td>
+                <td>
+                    <button class="action-btn" onclick="editRawMaterial({{ material.pk }}, '{{ material.material_name|escapejs }}')">✏️</button>
+                    <button class="action-btn btn-danger" onclick="deleteRawMaterial({{ material.pk }}, '{{ material.material_name|escapejs }}')">🗑️</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 
-        <div class="card">
-            <h4>Настройки оповещений</h4>
-            <div class="form-group">
-                <label>Email для критических оповещений</label>
-                <input type="email" name="alert_email" value="{{ settings.alert_email|default:'qc@pharma.ru' }}">
-            </div>
-            <div class="form-group">
-                <label>Порог предупреждения (%)</label>
-                <input type="number" name="warning_threshold" min="1" max="99" value="{{ settings.warning_threshold|default:'90' }}">
-            </div>
-            <button class="btn-success" onclick="saveAllSettings()">Сохранить настройки</button>
+    <h3 style="margin-top:30px;">Справочник продуктов</h3>
+    <button class="btn-success" onclick="openProductModal()" style="margin-bottom:10px;">Добавить продукт</button>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Код</th>
+                <th>Наименование</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for product in products %}
+            <tr>
+                <td>{{ product.pk }}</td>
+                <td>{{ product.product_code }}</td>
+                <td>{{ product.product_name }}</td>
+                <td>
+                    <button class="action-btn" onclick="editProduct({{ product.pk }}, '{{ product.product_code|escapejs }}', '{{ product.product_name|escapejs }}')">✏️</button>
+                    <button class="action-btn btn-danger" onclick="deleteProduct({{ product.pk }}, '{{ product.product_code|escapejs }}')">🗑️</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Модальное окно: Сырьё -->
+<div id="raw-material-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+        <h3 id="raw-material-modal-title">Добавить сырьё</h3>
+        <input type="hidden" id="rm-id">
+        <div class="form-group">
+            <label>Наименование</label>
+            <input type="text" id="rm-name" placeholder="Введите наименование сырья">
+            <div class="error-message" id="rm-name-error"></div>
+        </div>
+        <div style="display:flex; gap:10px; margin-top:15px;">
+            <button class="btn-success" onclick="saveRawMaterial()">Сохранить</button>
+            <button class="btn" onclick="closeRawMaterialModal()">Отмена</button>
         </div>
     </div>
 </div>
 
-<!-- Вкладка 3: Справочники -->
-<div class="tab-content" id="reference-tab">
-    <div class="nav-tabs">
-        <div class="nav-tab active" data-subtab="raw-materials">Сырьё</div>
-        <div class="nav-tab" data-subtab="parameters">Параметры</div>
-        <div class="nav-tab" data-subtab="products">Продукты</div>
-    </div>
-
-    <div class="subtab-content active" id="raw-materials-subtab">
-        <h3>Справочник сырья</h3>
-        <button class="btn-success" onclick="addRawMaterial()">Добавить сырьё</button>
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Наименование</th>
-                    <th>Действия</th>
-                </tr>
-            </thead>
-            <tbody id="raw-materials-list">
-                {% for material in raw_materials %}
-                <tr>
-                    <td>{{ material.pk }}</td>
-                    <td>{{ material.material_name }}</td>
-                    <td>
-                        <button class="action-btn" onclick="editRawMaterial({{ material.pk }})">✏️</button>
-                        <button class="action-btn btn-danger" onclick="deleteRawMaterial({{ material.pk }})">🗑️</button>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-
-    <div class="subtab-content" id="parameters-subtab">
-        <h3>Справочник параметров</h3>
-        <button class="btn-success" onclick="addParameter()">Добавить параметр</button>
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Параметр</th>
-                    <th>Ед. изм.</th>
-                    <th>Значение</th>
-                    <th>Допуск %</th>
-                    <th>Крит. откл. %</th>
-                    <th>Действия</th>
-                </tr>
-            </thead>
-            <tbody id="parameters-list">
-                {% for param in parameters %}
-                <tr>
-                    <td>{{ param.pk }}</td>
-                    <td>{{ param.parameter_name }}</td>
-                    <td>{{ param.unit }}</td>
-                    <td>{{ param.value }}</td>
-                    <td>{{ param.tolerance }}</td>
-                    <td>{{ param.critical_deviation }}</td>
-                    <td>
-                        <button class="action-btn" onclick="editParameter({{ param.pk }})">✏️</button>
-                        <button class="action-btn btn-danger" onclick="deleteParameter({{ param.pk }})">🗑️</button>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-
-    <div class="subtab-content" id="products-subtab">
-        <h3>Справочник продуктов</h3>
-        <button class="btn-success" onclick="addProduct()">Добавить продукт</button>
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Код</th>
-                    <th>Наименование</th>
-                    <th>Действия</th>
-                </tr>
-            </thead>
-            <tbody id="products-list">
-                {% for product in products %}
-                <tr>
-                    <td>{{ product.pk }}</td>
-                    <td>{{ product.product_code }}</td>
-                    <td>{{ product.product_name }}</td>
-                    <td>
-                        <button class="action-btn" onclick="editProduct({{ product.pk }})">✏️</button>
-                        <button class="action-btn btn-danger" onclick="deleteProduct({{ product.pk }})">🗑️</button>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+<!-- Модальное окно: Продукт -->
+<div id="product-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+        <h3 id="product-modal-title">Добавить продукт</h3>
+        <input type="hidden" id="prod-id">
+        <div class="form-group">
+            <label>Код продукта</label>
+            <input type="text" id="prod-code" placeholder="Например: ASP-500">
+            <div class="error-message" id="prod-code-error"></div>
+        </div>
+        <div class="form-group">
+            <label>Наименование</label>
+            <input type="text" id="prod-name" placeholder="Например: Аспирин 500 мг">
+            <div class="error-message" id="prod-name-error"></div>
+        </div>
+        <div style="display:flex; gap:10px; margin-top:15px;">
+            <button class="btn-success" onclick="saveProduct()">Сохранить</button>
+            <button class="btn" onclick="closeProductModal()">Отмена</button>
+        </div>
     </div>
 </div>
 
 <script>
-// Переключение основных вкладок
-document.querySelectorAll('#users-tab .nav-tab, #settings-tab .nav-tab, #reference-tab .nav-tab').forEach(tab => {
-    tab.addEventListener('click', function() {
-        const container = this.closest('.tab-content');
-        container.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-        this.classList.add('active');
-
-        container.querySelectorAll('.subtab-content').forEach(c => c.classList.remove('active'));
-        document.getElementById(this.dataset.subtab + '-subtab').classList.add('active');
-    });
-});
-
-// Управление пользователями
-function editUser(userId) {
-    window.location.href = `?edit_user=${userId}`;
+// ===== Переключение вкладок с сохранением в localStorage =====
+function switchTab(tabName) {
+    document.querySelectorAll('.nav-tabs > .nav-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+    document.getElementById(tabName + '-tab').classList.add('active');
+    localStorage.setItem('admin-tab', tabName);
 }
 
-function toggleUser(userId) {
-    if (confirm('Изменить статус пользователя?')) {
-        fetch(`/api/user/${userId}/toggle/`, { method: 'POST' })
-            .then(() => location.reload());
-    }
-}
-
-// Управление справочниками
-function addRawMaterial() {
-    const name = prompt('Введите наименование сырья:');
-    if (name) {
-        fetch('/api/raw-materials/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: name })
-        }).then(() => location.reload());
-    }
-}
-
-function deleteRawMaterial(id) {
-    if (confirm('Удалить сырьё?')) {
-        fetch(`/api/raw-materials/${id}/`, { method: 'DELETE' })
-            .then(() => location.reload());
-    }
-}
-
-function addParameter() {
-    window.location.href = '?add_parameter=1';
-}
-
-function addProduct() {
-    window.location.href = '?add_product=1';
-}
-
-// Настройки
-function saveSetting(key, value) {
-    fetch('/api/settings/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: key, value: value })
-    });
-}
-
-function saveAllSettings() {
-    alert('Настройки сохранены');
-    location.reload();
-}
-
-// Переключение основных вкладок (первый уровень)
 document.querySelectorAll('.nav-tabs > .nav-tab').forEach(tab => {
     if (!tab.closest('.tab-content')) {
         tab.addEventListener('click', function() {
-            document.querySelectorAll('.nav-tabs > .nav-tab').forEach(t => t.classList.remove('active'));
-            this.classList.add('active');
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            document.getElementById(this.dataset.tab + '-tab').classList.add('active');
+            switchTab(this.dataset.tab);
         });
     }
 });
+
+// Восстанавливаем вкладку при загрузке
+(function() {
+    const savedTab = localStorage.getItem('admin-tab');
+    if (savedTab) {
+        switchTab(savedTab);
+    }
+})();
+
+// ===== Валидация формы создания пользователя =====
+const loginInput = document.getElementById('new-login');
+const passwordInput = document.getElementById('new-password');
+const lastnameInput = document.getElementById('new-lastname');
+const firstnameInput = document.getElementById('new-firstname');
+const middlenameInput = document.getElementById('new-middlename');
+const createBtn = document.getElementById('create-user-btn');
+
+function validateLogin(input) {
+    const value = input.value;
+    const latinRegex = /^[a-zA-Z0-9_]+$/;
+    const err = document.getElementById('login-error');
+    if (value.length > 0 && (value.length < 8 || value.length > 15)) {
+        input.classList.add('error'); err.textContent = 'Логин должен быть 8-15 символов'; return false;
+    }
+    if (value.length > 0 && !latinRegex.test(value)) {
+        input.classList.add('error'); err.textContent = 'Только латинские буквы, цифры и _'; return false;
+    }
+    input.classList.remove('error'); err.textContent = ''; return true;
+}
+
+function validatePassword(input) {
+    const value = input.value;
+    const re = /^[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]+$/;
+    const err = document.getElementById('password-error');
+    if (value.length > 0 && (value.length < 8 || value.length > 15)) {
+        input.classList.add('error'); err.textContent = 'Пароль должен быть 8-15 символов'; return false;
+    }
+    if (value.length > 0 && !re.test(value)) {
+        input.classList.add('error'); err.textContent = 'Только латинские буквы, цифры и спецсимволы'; return false;
+    }
+    input.classList.remove('error'); err.textContent = ''; return true;
+}
+
+function validateFIO(input) {
+    const value = input.value;
+    const re = /^[a-zA-Zа-яА-ЯёЁ\s\-]*$/;
+    const errId = input.id.replace('new-', '') + '-error';
+    const err = document.getElementById(errId);
+    if (value.length > 0 && !re.test(value)) {
+        input.classList.add('error'); err.textContent = 'Только буквы, пробелы и дефис'; return false;
+    }
+    input.classList.remove('error'); if (err) err.textContent = ''; return true;
+}
+
+function updateCreateButton() {
+    const loginOk = loginInput.value.length >= 8 && loginInput.value.length <= 15 && /^[a-zA-Z0-9_]+$/.test(loginInput.value);
+    const passOk = passwordInput.value.length >= 8 && passwordInput.value.length <= 15 && /^[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]+$/.test(passwordInput.value);
+    const lastOk = lastnameInput.value.trim().length > 0 && /^[a-zA-Zа-яА-ЯёЁ\s\-]+$/.test(lastnameInput.value);
+    const firstOk = firstnameInput.value.trim().length > 0 && /^[a-zA-Zа-яА-ЯёЁ\s\-]+$/.test(firstnameInput.value);
+    const midOk = middlenameInput.value.trim() === '' || /^[a-zA-Zа-яА-ЯёЁ\s\-]+$/.test(middlenameInput.value);
+    createBtn.disabled = !(loginOk && passOk && lastOk && firstOk && midOk);
+}
+
+[loginInput, passwordInput, lastnameInput, firstnameInput, middlenameInput].forEach(inp => {
+    if (inp) inp.addEventListener('input', function() { updateCreateButton(); });
+});
+
+// ===== Модальное окно: Сырьё =====
+function openRawMaterialModal() {
+    document.getElementById('raw-material-modal-title').textContent = 'Добавить сырьё';
+    document.getElementById('rm-id').value = '';
+    document.getElementById('rm-name').value = '';
+    document.getElementById('rm-name-error').textContent = '';
+    document.getElementById('raw-material-modal').style.display = 'flex';
+}
+
+function closeRawMaterialModal() {
+    document.getElementById('raw-material-modal').style.display = 'none';
+}
+
+function editRawMaterial(id, name) {
+    document.getElementById('raw-material-modal-title').textContent = 'Редактировать сырьё';
+    document.getElementById('rm-id').value = id;
+    document.getElementById('rm-name').value = name;
+    document.getElementById('rm-name-error').textContent = '';
+    document.getElementById('raw-material-modal').style.display = 'flex';
+}
+
+function saveRawMaterial() {
+    const id = document.getElementById('rm-id').value;
+    const name = document.getElementById('rm-name').value.trim();
+    const err = document.getElementById('rm-name-error');
+
+    if (!name) { err.textContent = 'Наименование не может быть пустым'; return; }
+    if (!/^[a-zA-Zа-яА-ЯёЁ0-9\s\-]+$/.test(name)) { err.textContent = 'Только буквы, цифры, пробелы, дефис'; return; }
+
+    const method = id ? 'PUT' : 'POST';
+    const body = id ? JSON.stringify({ id: parseInt(id), name: name }) : JSON.stringify({ name: name });
+
+    fetch("{% url 'users:api_admin_raw_materials' %}", {
+        method: method,
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
+        body: body
+    }).then(r => r.json()).then(data => {
+        if (data.error) { err.textContent = data.error; }
+        else { location.reload(); }
+    });
+}
+
+function deleteRawMaterial(id, name) {
+    if (!confirm(`Удалить сырьё "${name}"?`)) return;
+    fetch("{% url 'users:api_admin_raw_materials' %}", {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
+        body: JSON.stringify({ id: id })
+    }).then(() => location.reload());
+}
+
+// ===== Модальное окно: Продукт =====
+function openProductModal() {
+    document.getElementById('product-modal-title').textContent = 'Добавить продукт';
+    document.getElementById('prod-id').value = '';
+    document.getElementById('prod-code').value = '';
+    document.getElementById('prod-name').value = '';
+    document.getElementById('prod-code-error').textContent = '';
+    document.getElementById('prod-name-error').textContent = '';
+    document.getElementById('product-modal').style.display = 'flex';
+}
+
+function closeProductModal() {
+    document.getElementById('product-modal').style.display = 'none';
+}
+
+function editProduct(id, code, name) {
+    document.getElementById('product-modal-title').textContent = 'Редактировать продукт';
+    document.getElementById('prod-id').value = id;
+    document.getElementById('prod-code').value = code;
+    document.getElementById('prod-name').value = name;
+    document.getElementById('prod-code-error').textContent = '';
+    document.getElementById('prod-name-error').textContent = '';
+    document.getElementById('product-modal').style.display = 'flex';
+}
+
+function saveProduct() {
+    const id = document.getElementById('prod-id').value;
+    const code = document.getElementById('prod-code').value.trim();
+    const name = document.getElementById('prod-name').value.trim();
+    const codeErr = document.getElementById('prod-code-error');
+    const nameErr = document.getElementById('prod-name-error');
+    codeErr.textContent = ''; nameErr.textContent = '';
+
+    if (!code) { codeErr.textContent = 'Код не может быть пустым'; return; }
+    if (!/^[a-zA-Z0-9\-]+$/.test(code)) { codeErr.textContent = 'Только латиница, цифры, минус'; return; }
+    if (!name) { nameErr.textContent = 'Наименование не может быть пустым'; return; }
+    if (!/^[a-zA-Zа-яА-ЯёЁ0-9\s\-]+$/.test(name)) { nameErr.textContent = 'Только буквы, цифры, пробелы, дефис'; return; }
+
+    const method = id ? 'PUT' : 'POST';
+    const body = id ? JSON.stringify({ id: parseInt(id), code: code, name: name }) : JSON.stringify({ code: code, name: name });
+
+    fetch("{% url 'users:api_admin_products' %}", {
+        method: method,
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
+        body: body
+    }).then(r => r.json()).then(data => {
+        if (data.error) {
+            if (data.error.includes('Код')) codeErr.textContent = data.error;
+            else nameErr.textContent = data.error;
+        } else { location.reload(); }
+    });
+}
+
+function deleteProduct(id, code) {
+    if (!confirm(`Удалить продукт "${code}"?`)) return;
+    fetch("{% url 'users:api_admin_products' %}", {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
+        body: JSON.stringify({ id: id })
+    }).then(() => location.reload());
+}
 </script>
+
+<style>
+/* Модальное окно — светлая тема */
+.modal {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
+    z-index: 1000;
+}
+.modal-content {
+    background: #fff; color: #222; padding: 30px; border-radius: 10px; width: 450px; max-width: 90%;
+    border: 1px solid #dee2e6; box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+}
+.modal-content h3 { margin-top: 0; color: #222; }
+.modal-content .form-group { margin-bottom: 15px; }
+.modal-content label { color: #555; }
+.modal-content input[type="text"],
+.modal-content input[type="password"] {
+    background: #fff; color: #222; border: 1px solid #ced4da;
+}
+.modal-content .error-message { color: #e74c3c; }
+</style>
 {% endblock %}

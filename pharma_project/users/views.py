@@ -123,6 +123,45 @@ def admin_dashboard(request):
     user = User.objects.get(user_id=request.session['user_id'])
 
     if request.method == 'POST':
+        action = request.POST.get('action', 'create_user')
+
+        if action == 'toggle_user':
+            # Деактивация / Активация пользователя
+            user_id = request.POST.get('user_id')
+            if user_id:
+                target = get_object_or_404(User, user_id=int(user_id))
+                if target.user_id == user.user_id:
+                    messages.error(request, 'Нельзя изменить статус своей учетной записи')
+                else:
+                    target.is_active = not target.is_active
+                    target.save()
+                    status = 'Активирован' if target.is_active else 'Деактивирован'
+                    try:
+                        act = Action.objects.get(action_name=status + ' пользователя')
+                        AuditLog.objects.create(user=user, action=act, comment=f"{status} пользователь {target.login}")
+                    except:
+                        pass
+                    messages.success(request, f'{status} пользователь {target.login}')
+            return redirect('users:admin_dashboard')
+
+        if action == 'delete_user':
+            # Удаление пользователя
+            user_id = request.POST.get('user_id')
+            if user_id:
+                target = get_object_or_404(User, user_id=int(user_id))
+                if target.user_id == user.user_id:
+                    messages.error(request, 'Нельзя удалить свою учетную запись')
+                else:
+                    target.delete()
+                    try:
+                        act = Action.objects.get(action_name='Удаление пользователя')
+                        AuditLog.objects.create(user=user, action=act, comment=f"Удалён пользователь {target.login}")
+                    except:
+                        pass
+                    messages.success(request, f'Пользователь {target.login} удалён')
+            return redirect('users:admin_dashboard')
+
+        # create_user — создание пользователя
         login = request.POST.get('login')
         password = request.POST.get('password')
         last_name = request.POST.get('last_name')
@@ -138,6 +177,16 @@ def admin_dashboard(request):
         # Проверка пароля
         if not re.match(r'^[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]{8,15}$', password):
             messages.error(request, 'Пароль должен быть 8-15 символов, только латиница, цифры, спецсимволы')
+            return redirect('users:admin_dashboard')
+
+        # Проверка ФИО
+        fio_re = re.compile(r'^[a-zA-Zа-яА-ЯёЁ\s\-]+$')
+        for fname, label in [(last_name, 'Фамилия'), (first_name, 'Имя')]:
+            if not fname or not fio_re.match(fname) or not fname.strip():
+                messages.error(request, f'{label}: только буквы, пробелы и дефис')
+                return redirect('users:admin_dashboard')
+        if middle_name and not fio_re.match(middle_name):
+            messages.error(request, 'Отчество: только буквы, пробелы и дефис')
             return redirect('users:admin_dashboard')
 
         # Проверка уникальности
@@ -159,12 +208,12 @@ def admin_dashboard(request):
 
         # Логируем создание
         try:
-            action = Action.objects.get(action_name='Создание пользователя')
+            action_obj = Action.objects.get(action_name='Создание пользователя')
             doc_type = DocumentType.objects.get(type_name='MBR')
             doc = Document.objects.create(type=doc_type)
             AuditLog.objects.create(
                 user=user,
-                action=action,
+                action=action_obj,
                 document=doc,
                 comment=f"Создан пользователь {login}"
             )
@@ -175,10 +224,12 @@ def admin_dashboard(request):
         return redirect('users:admin_dashboard')
 
     users = User.objects.all().order_by('-created_at')
-
+    from mbr.models import RawMaterial, Product
     context = {
         'user': user,
         'users': users,
+        'raw_materials': RawMaterial.objects.all().order_by('material_name'),
+        'products': Product.objects.all().order_by('product_code'),
     }
     return render(request, 'users/admin_dashboard.html', context)
 
@@ -2000,3 +2051,98 @@ def director_stats_api(request):
         'status_chart': status_counts,
         'deviation_stats': deviation_by_label,
     })
+
+
+# ====================================================================
+# API для справочников (администратор)
+# ====================================================================
+
+def api_admin_raw_materials(request):
+    """CRUD справочника сырья (только администратор)."""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'системный администратор':
+        return JsonResponse({'error': 'Доступ запрещён'}, status=403)
+
+    from mbr.models import RawMaterial
+    admin_user = User.objects.get(user_id=request.session['user_id'])
+
+    if request.method == 'POST':
+        import json
+        data = json.loads(request.body)
+        name = data.get('name', '').strip()
+        if not name:
+            return JsonResponse({'error': 'Наименование не может быть пустым'}, status=400)
+        if not re.match(r'^[a-zA-Zа-яА-ЯёЁ0-9\s\-]+$', name):
+            return JsonResponse({'error': 'Только буквы, цифры, пробелы и дефис'}, status=400)
+        rm = RawMaterial.objects.create(material_name=name)
+        return JsonResponse({'id': rm.pk, 'name': rm.material_name})
+
+    elif request.method == 'PUT':
+        import json
+        data = json.loads(request.body)
+        rm_id = data.get('id')
+        name = data.get('name', '').strip()
+        rm = get_object_or_404(RawMaterial, pk=rm_id)
+        if not name or not re.match(r'^[a-zA-Zа-яА-ЯёЁ0-9\s\-]+$', name):
+            return JsonResponse({'error': 'Неверное наименование'}, status=400)
+        rm.material_name = name
+        rm.save()
+        return JsonResponse({'id': rm.pk, 'name': rm.material_name})
+
+    elif request.method == 'DELETE':
+        import json
+        data = json.loads(request.body)
+        rm = get_object_or_404(RawMaterial, pk=data.get('id'))
+        rm.delete()
+        return JsonResponse({'success': True})
+
+    return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+
+def api_admin_products(request):
+    """CRUD справочника продуктов (только администратор)."""
+    if 'user_id' not in request.session or request.session.get('user_role') != 'системный администратор':
+        return JsonResponse({'error': 'Доступ запрещён'}, status=403)
+
+    from mbr.models import Product
+    admin_user = User.objects.get(user_id=request.session['user_id'])
+
+    if request.method == 'POST':
+        import json
+        data = json.loads(request.body)
+        code = data.get('code', '').strip()
+        name = data.get('name', '').strip()
+        if not code or not re.match(r'^[a-zA-Z0-9\-]+$', code):
+            return JsonResponse({'error': 'Код: только латиница, цифры, минус'}, status=400)
+        if not name or not re.match(r'^[a-zA-Zа-яА-ЯёЁ0-9\s\-]+$', name):
+            return JsonResponse({'error': 'Наименование: только буквы, цифры, пробелы, дефис'}, status=400)
+        if Product.objects.filter(product_code=code).exists():
+            return JsonResponse({'error': 'Код продукта уже существует'}, status=400)
+        p = Product.objects.create(product_code=code, product_name=name)
+        return JsonResponse({'id': p.pk, 'code': p.product_code, 'name': p.product_name})
+
+    elif request.method == 'PUT':
+        import json
+        data = json.loads(request.body)
+        p_id = data.get('id')
+        code = data.get('code', '').strip()
+        name = data.get('name', '').strip()
+        p = get_object_or_404(Product, pk=p_id)
+        if not code or not re.match(r'^[a-zA-Z0-9\-]+$', code):
+            return JsonResponse({'error': 'Код: только латиница, цифры, минус'}, status=400)
+        if not name or not re.match(r'^[a-zA-Zа-яА-ЯёЁ0-9\s\-]+$', name):
+            return JsonResponse({'error': 'Наименование: только буквы, цифры, пробелы, дефис'}, status=400)
+        if Product.objects.filter(product_code=code).exclude(pk=p_id).exists():
+            return JsonResponse({'error': 'Код продукта уже существует'}, status=400)
+        p.product_code = code
+        p.product_name = name
+        p.save()
+        return JsonResponse({'id': p.pk, 'code': p.product_code, 'name': p.product_name})
+
+    elif request.method == 'DELETE':
+        import json
+        data = json.loads(request.body)
+        p = get_object_or_404(Product, pk=data.get('id'))
+        p.delete()
+        return JsonResponse({'success': True})
+
+    return JsonResponse({'error': 'Method not allowed'}, status=405)

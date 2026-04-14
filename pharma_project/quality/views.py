@@ -195,10 +195,8 @@ def _extract_disintegration_time(ebr, lab_text):
         return
 
     # Ищем числовое значение — время распадаемости в минутах
-    # Паттерны: "15 мин", "время распадаемости: 15", "15.5"
     match = re.search(r'(\d+[.,]?\d*)\s*(?:мин|minute)', lab_text, re.IGNORECASE)
     if not match:
-        # Пробуем просто первое число
         match = re.search(r'(\d+[.,]?\d*)', lab_text)
 
     if not match:
@@ -208,6 +206,10 @@ def _extract_disintegration_time(ebr, lab_text):
         value = float(match.group(1).replace(',', '.'))
     except ValueError:
         return
+
+    # Валидация: >0 и <=4320 (72 часа)
+    if value <= 0 or value > 4320:
+        return  # Не сохраняем невалидное значение
 
     # Находим параметр «Время распадаемости»
     from ebr.models import Parameter
